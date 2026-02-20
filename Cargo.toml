@@ -1,0 +1,51 @@
+[package]
+name = "tt"
+version = "0.1.1"
+edition = "2021"
+authors = ["tt Contributors"]
+description = "DAG-Based Task Tracker (CLI + MCP Server)"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+
+[[bin]]
+name = "tt"
+path = "src/main.rs"
+
+[dependencies]
+# CLI framework
+clap = { version = "4.5", features = ["derive"] }
+
+# Database
+rusqlite = { version = "0.38", features = ["bundled"] }
+
+# Async runtime (for MCP server)
+tokio = { version = "1.49", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# MCP - JSON Schema generation
+schemars = "0.8"
+
+# Directory paths
+dirs = "5.0"
+
+[dev-dependencies]
+tempfile = "3.14"
+assert_cmd = "2.0"
+predicates = "3.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
