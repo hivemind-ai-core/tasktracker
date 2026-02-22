@@ -11,14 +11,15 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
-    description TEXT,
-    dod TEXT,
+    description TEXT NOT NULL,
+    dod TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     manual_order REAL NOT NULL DEFAULT 0.0,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
     started_at TEXT,
     completed_at TEXT,
     last_touched_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
     
     -- Status must be one of the valid values
     CONSTRAINT chk_status CHECK (status IN ('pending', 'in_progress', 'completed', 'blocked'))
@@ -70,6 +71,17 @@ AFTER UPDATE ON tasks
 BEGIN
     UPDATE tasks SET last_touched_at = strftime('%Y-%m-%dT%H:%M:%S', 'now') WHERE id = NEW.id;
 END;
+
+-- Trigger to ensure only one task can be in_progress at a time
+CREATE TRIGGER IF NOT EXISTS trg_single_in_progress
+BEFORE UPDATE OF status ON tasks
+WHEN NEW.status = 'in_progress'
+BEGIN
+    SELECT CASE
+        WHEN (SELECT COUNT(*) FROM tasks WHERE status = 'in_progress' AND id != NEW.id) > 0
+        THEN RAISE(ABORT, 'Cannot have more than one in_progress task')
+    END;
+END;
 "#;
 
 /// SQL to enable WAL mode
@@ -106,15 +118,15 @@ mod tests {
 
         // Valid status should work
         conn.execute(
-            "INSERT INTO tasks (title, status, manual_order) VALUES (?1, ?2, ?3)",
-            ["Test", "pending", "10.0"],
+            "INSERT INTO tasks (title, description, dod, status, manual_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ["Test", "Description", "DoD", "pending", "10.0"],
         )
         .unwrap();
 
         // Invalid status should fail
         let result = conn.execute(
-            "INSERT INTO tasks (title, status, manual_order) VALUES (?1, ?2, ?3)",
-            ["Test2", "invalid_status", "20.0"],
+            "INSERT INTO tasks (title, description, dod, status, manual_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ["Test2", "Description", "DoD", "invalid_status", "20.0"],
         );
         assert!(result.is_err(), "Invalid status should be rejected");
     }
@@ -126,8 +138,8 @@ mod tests {
 
         // Create a task first
         conn.execute(
-            "INSERT INTO tasks (title, status, manual_order) VALUES (?1, ?2, ?3)",
-            ["Test", "pending", "10.0"],
+            "INSERT INTO tasks (title, description, dod, status, manual_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ["Test", "Description", "DoD", "pending", "10.0"],
         )
         .unwrap();
 
@@ -159,8 +171,8 @@ mod tests {
 
         // Create a task
         conn.execute(
-            "INSERT INTO tasks (title, status, manual_order) VALUES (?1, ?2, ?3)",
-            ["Test", "pending", "10.0"],
+            "INSERT INTO tasks (title, description, dod, status, manual_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ["Test", "Description", "DoD", "pending", "10.0"],
         )
         .unwrap();
 
@@ -192,6 +204,41 @@ mod tests {
         assert_ne!(
             initial, updated,
             "last_touched_at should be updated on modification"
+        );
+    }
+
+    #[test]
+    fn test_only_one_in_progress_task() {
+        let conn = in_memory_db();
+        conn.execute_batch(CREATE_SCHEMA_SQL).unwrap();
+
+        // Create two tasks
+        conn.execute(
+            "INSERT INTO tasks (title, description, dod, status, manual_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ["Task1", "Description", "DoD", "pending", "10.0"],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO tasks (title, description, dod, status, manual_order) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ["Task2", "Description", "DoD", "pending", "20.0"],
+        ).unwrap();
+
+        // Set first task to in_progress
+        conn.execute("UPDATE tasks SET status = 'in_progress' WHERE id = 1", [])
+            .unwrap();
+
+        // Verify first task is in_progress
+        let status: String = conn
+            .query_row("SELECT status FROM tasks WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "in_progress");
+
+        // Trying to set second task to in_progress should fail
+        let result = conn.execute("UPDATE tasks SET status = 'in_progress' WHERE id = 2", []);
+        assert!(
+            result.is_err(),
+            "Should not allow second task to be in_progress"
         );
     }
 }

@@ -29,8 +29,6 @@ impl McpServer {
             McpError::Database("No tt project found. Run `tt init` first.".to_string())
         })?;
 
-        eprintln!("DEBUG: MCP server using database: {:?}", db_path);
-
         Ok(McpServer {
             transport: StdioTransport::new(),
             db_path,
@@ -150,7 +148,14 @@ impl McpServer {
     ) -> Result<(), McpError> {
         match self.handlers.get(tool_name) {
             Some(handler) => match handler.handle(db, arguments) {
-                Ok(mcp_response) => self.transport.send_mcp_response(id, mcp_response),
+                Ok(mcp_response) => {
+                    // Convert McpResponse to MCP protocol format with content field
+                    let protocol_response = mcp_response_to_protocol(mcp_response);
+                    self.transport.send_response(&JsonRpcResponse::success(
+                        id,
+                        protocol_response,
+                    ))
+                }
                 Err(msg) => self
                     .transport
                     .send_mcp_response(id, McpResponse::error("InternalError", &msg)),
@@ -164,5 +169,32 @@ impl McpServer {
 
     pub fn shutdown(&mut self) {
         self.running = false;
+    }
+}
+
+/// Convert McpResponse to MCP protocol format with content field
+fn mcp_response_to_protocol(response: McpResponse) -> serde_json::Value {
+    match response {
+        McpResponse::Ok { data } => {
+            serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string(&data).unwrap_or_default()
+                }]
+            })
+        }
+        McpResponse::Error { error_code, message } => {
+            serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string(&serde_json::json!({
+                        "status": "error",
+                        "error_code": error_code,
+                        "message": message
+                    })).unwrap_or_default()
+                }],
+                "isError": true
+            })
+        }
     }
 }

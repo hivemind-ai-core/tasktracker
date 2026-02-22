@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn test_create_artifact() {
         let conn = setup();
-        let task = create_task(&conn, "Test Task", None, None, 10.0).unwrap();
+        let task = create_task(&conn, "Test Task", "", "", 10.0).unwrap();
 
         let artifact =
             create_artifact(&conn, task.id, "research", ".tt/artifacts/1-research.md").unwrap();
@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn test_get_artifact() {
         let conn = setup();
-        let task = create_task(&conn, "Test Task", None, None, 10.0).unwrap();
+        let task = create_task(&conn, "Test Task", "", "", 10.0).unwrap();
         let created =
             create_artifact(&conn, task.id, "research", ".tt/artifacts/1-research.md").unwrap();
 
@@ -120,8 +120,8 @@ mod tests {
     #[test]
     fn test_get_artifacts_for_task() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
 
         create_artifact(&conn, task1.id, "research", ".tt/artifacts/1-research.md").unwrap();
         create_artifact(&conn, task1.id, "plan", ".tt/artifacts/1-plan.md").unwrap();
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn test_delete_artifact() {
         let conn = setup();
-        let task = create_task(&conn, "Test Task", None, None, 10.0).unwrap();
+        let task = create_task(&conn, "Test Task", "", "", 10.0).unwrap();
         let artifact =
             create_artifact(&conn, task.id, "research", ".tt/artifacts/1-research.md").unwrap();
 

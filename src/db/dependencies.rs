@@ -137,8 +137,8 @@ mod tests {
     #[test]
     fn test_add_dependency() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
 
         add_dependency(&conn, task2.id, task1.id).unwrap();
 
@@ -148,8 +148,8 @@ mod tests {
     #[test]
     fn test_add_duplicate_dependency_fails() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
 
         add_dependency(&conn, task2.id, task1.id).unwrap();
         let result = add_dependency(&conn, task2.id, task1.id);
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn test_self_dependency_fails() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
 
         let result = add_dependency(&conn, task1.id, task1.id);
         assert!(result.is_err()); // Self-dependency should fail
@@ -168,8 +168,8 @@ mod tests {
     #[test]
     fn test_remove_dependency() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
 
         add_dependency(&conn, task2.id, task1.id).unwrap();
         remove_dependency(&conn, task2.id, task1.id).unwrap();
@@ -187,9 +187,9 @@ mod tests {
     #[test]
     fn test_get_dependencies() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
-        let task3 = create_task(&conn, "Task 3", None, None, 30.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
+        let task3 = create_task(&conn, "Task 3", "", "", 30.0).unwrap();
 
         add_dependency(&conn, task3.id, task1.id).unwrap();
         add_dependency(&conn, task3.id, task2.id).unwrap();
@@ -201,9 +201,9 @@ mod tests {
     #[test]
     fn test_get_dependents() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
-        let task3 = create_task(&conn, "Task 3", None, None, 30.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
+        let task3 = create_task(&conn, "Task 3", "", "", 30.0).unwrap();
 
         // Both task2 and task3 depend on task1
         add_dependency(&conn, task2.id, task1.id).unwrap();
@@ -216,9 +216,9 @@ mod tests {
     #[test]
     fn test_get_incomplete_dependencies() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
-        let task3 = create_task(&conn, "Task 3", None, None, 30.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
+        let task3 = create_task(&conn, "Task 3", "", "", 30.0).unwrap();
 
         // task3 depends on task1 and task2
         add_dependency(&conn, task3.id, task1.id).unwrap();
@@ -234,8 +234,8 @@ mod tests {
     #[test]
     fn test_get_all_dependencies() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
 
         add_dependency(&conn, task2.id, task1.id).unwrap();
 
@@ -248,8 +248,8 @@ mod tests {
     #[test]
     fn test_has_dependencies() {
         let conn = setup();
-        let task1 = create_task(&conn, "Task 1", None, None, 10.0).unwrap();
-        let task2 = create_task(&conn, "Task 2", None, None, 20.0).unwrap();
+        let task1 = create_task(&conn, "Task 1", "", "", 10.0).unwrap();
+        let task2 = create_task(&conn, "Task 2", "", "", 20.0).unwrap();
 
         assert!(!has_dependencies(&conn, task2.id).unwrap());
 

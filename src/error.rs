@@ -16,8 +16,8 @@ pub enum Error {
     TaskNotPending(i64),
 
     /// Another task is already in progress
-    #[error("Task #{0} is already in progress. Finish or stop it first.")]
-    AnotherTaskActive(i64),
+    #[error("Task #{0} ({1}) is already in progress. Finish or stop it first.")]
+    AnotherTaskActive(i64, String),
 
     /// No task is currently active
     #[error("No task is currently in progress")]
@@ -99,10 +99,10 @@ mod tests {
 
     #[test]
     fn test_error_another_task_active() {
-        let err = Error::AnotherTaskActive(5);
+        let err = Error::AnotherTaskActive(5, "Implement Auth".to_string());
         assert_eq!(
             err.to_string(),
-            "Task #5 is already in progress. Finish or stop it first."
+            "Task #5 (Implement Auth) is already in progress. Finish or stop it first."
         );
     }
 

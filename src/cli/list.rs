@@ -4,20 +4,52 @@ use crate::core::{get_target, list_tasks, TaskStatus};
 use crate::error::{Error, Result};
 use rusqlite::Connection;
 
-/// List tasks
-pub fn run(conn: &Connection, all: bool) -> Result<()> {
-    let tasks = list_tasks(conn, all)?;
+/// Parse status string to TaskStatus
+fn parse_status(status: &str) -> Result<TaskStatus> {
+    match status.to_lowercase().as_str() {
+        "pending" => Ok(TaskStatus::Pending),
+        "in_progress" => Ok(TaskStatus::InProgress),
+        "completed" => Ok(TaskStatus::Completed),
+        "blocked" => Ok(TaskStatus::Blocked),
+        _ => Err(Error::InvalidStatus(status.to_string())),
+    }
+}
 
-    if !all {
-        // Show target header
+/// List tasks
+pub fn run(
+    conn: &Connection,
+    all: bool,
+    archived: bool,
+    status: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<()> {
+    // Parse status filter if provided
+    let status_filter = match status {
+        Some(s) => Some(parse_status(&s)?),
+        None => None,
+    };
+
+    // Determine archived filter
+    let archived_filter = if archived { Some(true) } else { None };
+
+    let tasks = list_tasks(conn, all, status_filter, limit, offset, archived_filter)?;
+
+    // Show header
+    if archived {
+        println!("Archived tasks:");
+    } else if !all && status_filter.is_none() {
+        // Show focus header if set
         match get_target(conn)? {
             Some(target) => {
-                println!("Target: #{} ({})", target.id, target.title);
+                println!("Focus: #{} ({})", target.id, target.title);
             }
             None => {
-                return Err(Error::NoTarget);
+                println!("No focus set (showing all tasks)");
             }
         }
+    } else if let Some(s) = status_filter {
+        println!("Tasks with status: {}", s);
     }
 
     for task in &tasks {
@@ -30,7 +62,7 @@ pub fn run(conn: &Connection, all: bool) -> Result<()> {
             let dep_strs: Vec<String> = deps
                 .iter()
                 .map(|d| {
-                    let dep_task = crate::db::tasks::get_task(conn, d.depends_on);
+                    let dep_task = crate::db::tasks::get_task(conn, d.depends_on, false);
                     match dep_task {
                         Ok(Some(t)) => format!("#{} {}", t.id, t.status.display_char()),
                         _ => format!("#{}", d.depends_on),

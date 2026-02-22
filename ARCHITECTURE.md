@@ -1,4 +1,51 @@
-# `tt` — Architecture Document v1.0
+# `tt` — Architecture Document v2.1
+
+**Last Updated:** 2026-02-22
+**Specification Version:** v3.0
+**Implementation Status:** ~85% Complete
+
+## Overview
+
+This architecture document reflects the current implementation state of `tt` v3.0 as specified in SPEC.md. The three-tier architecture is complete and functional, with refinements and additional features planned per PLAN.md.
+
+### Key Changes from v1.0
+
+This update to ARCHITECTURE.md reflects:
+1. **SPEC.md v3.0** refinements including unified commands and CLI aliases
+2. **Focus system** replaces Target (focus on a task)
+3. Schema changes: boolean `deleted` column (not `deleted_at`)
+4. Required fields: `description` and `dod` as NOT NULL
+5. Enhanced error messages with both ID and title
+6. Unified commands reducing CLI surface area
+7. **Dump/Restore** commands for database export/import
+8. **Split** command for breaking tasks into subtasks
+9. **Archive** command for batch-Archiving completed/cancelled tasks
+10. **Edit actions** for complete/stop/cancel/block/unblock operations
+
+### Implementation Progress
+
+**Complete (✅):**
+- Core three-tier architecture (CLI, MCP, Core Operations, Database)
+- Database schema with indexes and constraints
+- Task CRUD operations
+- Dependency graph with topological sorting
+- Focus subgraph computation (renamed from Target)
+- State machine transitions (start, stop, complete, block, unblock)
+- Artifact logging and retrieval
+- Manual ordering with float precision
+- Cycle detection
+- MCP server over stdio
+- CLI commands for all core operations
+- Task splitting
+- Task deletion (soft delete via archive)
+- Task restart
+- Database dump to TOML (export)
+- Database restore from TOML (import)
+- CLI aliases (ls, mv)
+- Focus (target) system
+- Edit actions (complete, stop, cancel, block, unblock)
+
+---
 
 ## 1. Module Hierarchy
 
@@ -18,21 +65,29 @@ tt/
     │   ├── edit.rs
     │   ├── show.rs
     │   ├── list.rs
-    │   ├── workflow.rs   # start, stop, done, block, unblock
+    │   ├── workflow.rs   # advance, current
+    │   ├── focus.rs     # focus (renamed from target)
     │   ├── dependencies.rs
     │   ├── artifacts.rs
-    │   ├── ordering.rs
-    │   └── target.rs
+    │   ├── ordering.rs  # reorder, reindex
+    │   ├── split.rs
+    │   ├── archive.rs
+    │   ├── dump.rs     # export database to TOML
+    │   ├── restore.rs  # import database from TOML
+    │   ├── install.rs
+    │   └── mcp.rs
     ├── mcp/              # MCP server implementation
     │   ├── mod.rs
     │   ├── server.rs     # JSON-RPC over stdio
+    │   ├── transport.rs
     │   └── tools.rs      # Tool definitions and handlers
     ├── core/             # Business logic layer (shared by CLI and MCP)
     │   ├── mod.rs
-    │   ├── task.rs       # Task CRUD operations
+    │   ├── models.rs     # Task, TaskStatus, etc.
+    │   ├── operations.rs # Task CRUD operations
     │   ├── graph.rs      # DAG operations, topological sort
     │   ├── state.rs      # State machine transitions
-    │   ├── target.rs     # Target subgraph computation
+    │   ├── target.rs     # Focus subgraph computation (renamed from target)
     │   └── ordering.rs   # Manual order calculations
     ├── db/               # Database layer
     │   ├── mod.rs
@@ -70,14 +125,15 @@ main.rs
 pub struct Task {
     pub id: i64,
     pub title: String,
-    pub description: Option<String>,
-    pub dod: Option<String>,                // Definition of Done
+    pub description: Option<String>,     // Nullable in current implementation
+    pub dod: Option<String>,            // Nullable in current implementation
     pub status: TaskStatus,
     pub manual_order: f64,
-    pub created_at: String,                 // ISO 8601
+    pub created_at: String,             // ISO 8601
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub last_touched_at: String,
+    pub deleted: bool,                  // Soft delete flag (boolean, not timestamp)
 }
 
 /// Task status with strict state transitions
@@ -88,6 +144,7 @@ pub enum TaskStatus {
     InProgress,
     Completed,
     Blocked,
+    Cancelled,                          // Added for cancellation support
 }
 
 /// A dependency edge: task_id depends on depends_on
@@ -166,34 +223,29 @@ pub trait StateMachine {
 ```toml
 [dependencies]
 # CLI framework
-clap = { version = "4.9", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.38", features = ["bundled"] }
 
 # Async runtime (for MCP server)
-tokio = { version = "1.42", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
-
-# MCP (choose one at implementation time)
-# Option 1: clap-mcp (preferred if mature)
-# clap-mcp = "0.1"  # Verify maturity and features before use
-# Option 2: rmcp (official SDK)
-# rmcp = "0.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "0.8"
 
 # Error handling
 thiserror = "2.0"
-anyhow = "1.0"  # For context in MCP handlers
+anyhow = "1.0"
 
 # Timestamps
 chrono = { version = "0.4", features = ["serde"] }
 
-# For manual MCP implementation if needed
-# jsonrpc-core = "18.0"  # Only if not using clap-mcp or rmcp
+# Directory paths
+dirs = "5.0"
 ```
 
 ### 3.2 Dev Dependencies
@@ -221,6 +273,71 @@ tempfile = "3.14"  # For test database isolation
 
 ---
 
+## 3.5 CLI and MCP Surface Area
+
+### 3.5.1 CLI Commands
+
+**Current State (24 total commands):**
+
+| Command | Status | Notes |
+|---------|--------|-------|
+| `tt init` | ✅ | Initialize project |
+| `tt add <title> <desc> <dod>` | ✅ | Create task with required fields |
+| `tt edit <id> [--title] [--desc] [--dod]` | ✅ | Edit task fields |
+| `tt edit <id> --status <status>` | ✅ | Unified status change |
+| `tt edit <id> --action <action>` | ✅ | Action: complete, stop, cancel, block, unblock |
+| `tt show <id> [<ids>...]` | ✅ | Show one or more tasks |
+| `tt list` / `tt ls` | ✅ | List tasks |
+| `tt focus [show\|set \<id\>\|clear\|next\|last]` | ✅ | Focus system (renamed from target) |
+| `tt current` | ✅ | Show current task |
+| `tt advance [--dry-run]` | ✅ | Complete current, start next |
+| `tt depend <id> <ids...>` | ✅ | Add dependencies |
+| `tt depend --remove` | ✅ | Remove dependencies |
+| `tt block <ids...>` | ✅ | Block multiple tasks |
+| `tt unblock <ids...>` | ✅ | Unblock multiple tasks |
+| `tt log <name> --file <path>` | ✅ | Log artifact |
+| `tt artifacts [--task <id>]` | ✅ | List artifacts |
+| `tt reorder` / `tt mv` | ✅ | Reorder task |
+| `tt reindex` | ✅ | Reindex all orders |
+| `tt split <id> <subtasks...>` | ✅ | Split task into subtasks |
+| `tt archive all` | ✅ | Archive completed/cancelled tasks |
+| `tt mcp` | ✅ | Start MCP server |
+| `tt install` | ✅ | Install MCP in AI tools |
+| `tt dump <file>` | ✅ | Export database to TOML |
+| `tt restore <file>` | ✅ | Import database from TOML |
+
+### 3.5.2 MCP Tools
+
+**Current State (23 total tools):**
+
+| Tool | Status | Notes |
+|------|--------|-------|
+| `create_task` | ✅ | Create task with required fields |
+| `edit_task` | ✅ | Edit task with status/actions |
+| `get_task` | ✅ | Get single task |
+| `get_tasks` | ✅ | Get multiple tasks |
+| `list_tasks` | ✅ | List with filters |
+| `get_status` | ✅ | Full project status |
+| `get_target` | ✅ | Get current focus (renamed from target) |
+| `set_target` | ✅ | Set focus |
+| `clear_target` | ✅ | Clear focus |
+| `get_current_task` | ✅ | Get active task |
+| `get_next_task` | ✅ | Get next task |
+| `advance` | ✅ | Complete current, start next |
+| `add_dependency` | ✅ | Add dependencies |
+| `remove_dependency` | ✅ | Remove dependencies |
+| `manage_dependency` | ✅ | Unified dependency management |
+| `block_tasks` | ✅ | Block multiple |
+| `unblock_tasks` | ✅ | Unblock multiple |
+| `log_artifact` | ✅ | Log artifact |
+| `get_artifacts` | ✅ | Get artifacts |
+| `reorder_task` | ✅ | Reorder task |
+| `split_task` | ✅ | Split task |
+| `archive_tasks` | ✅ | Archive completed tasks |
+| `tt_split_task` | ✅ | Internal split helper |
+
+---
+
 ## 4. Error Handling
 
 ### 4.1 Error Type Definition
@@ -238,8 +355,8 @@ pub enum Error {
     #[error("Task #{0} is not pending, cannot start")]
     TaskNotPending(i64),
 
-    #[error("Task #{0} is already in progress. Finish or stop it first.")]
-    AnotherTaskActive(i64),
+    #[error("Task #{0} ({1}) is already in progress. Finish or stop it first.")]
+    AnotherTaskActive(i64, String),  // Includes both ID and title
 
     #[error("No task is currently in progress")]
     NoActiveTask,
@@ -360,15 +477,17 @@ PRAGMA foreign_keys = ON;
 
 ### 6.1 Invariant Enforcement Points
 
-| Invariant | Enforcement Location |
-|-----------|---------------------|
-| Single active task | `state.rs:start_task()` database transaction |
-| Dependencies gate starting | `state.rs:start_task()` checks dependencies table |
-| No cycles | `graph.rs:would_create_cycle()` pre-commit DFS |
-| DoD required for completion | `state.rs:complete_task()` validates `dod` field |
-| Topological correctness | `graph.rs:topological_sort()` algorithm correctness |
-| No deletion | No delete functions implemented |
-| last_touched_at updates | Trigger in database schema |
+| Invariant | Enforcement Location | Status |
+|-----------|---------------------|--------|
+| Single active task | `state.rs:start_task()` database trigger | ✅ Implemented |
+| Dependencies gate starting | `operations.rs:start_task()` checks dependencies table | ✅ Implemented |
+| No cycles | `graph.rs:would_create_cycle()` pre-commit DFS | ✅ Implemented |
+| DoD required for completion | `state.rs:complete_task()` validates `dod` field | ✅ Implemented |
+| Topological correctness | `graph.rs:topological_sort()` algorithm correctness | ✅ Implemented |
+| Description and DoD optional on creation | Schema allows NULL, enforced at completion time | ✅ Implemented |
+| Soft delete for deleted tasks | `deleted` boolean column | ✅ Implemented |
+| last_touched_at updates | Trigger in database schema | ✅ Implemented |
+| Cancelled status support | New status value | ✅ Implemented |
 
 ### 6.2 Transaction Boundaries
 
@@ -542,19 +661,104 @@ No dynamic linking: All features are bundled (especially SQLite via `rusqlite`'s
 ### 10.1 Architecture Designed For
 
 1. **Multiple targets:** The `config` table already supports arbitrary key-value pairs
-2. **Task deletion:** Schema supports ON DELETE CASCADE if needed
+2. **Task deletion:** Schema uses `deleted_at` timestamp for soft delete, supports audit/recovery
 3. **Web UI:** Core logic is independent of presentation layer
 4. **Export formats:** Task structs already implement `Serialize`
+5. **CLI aliases:** clap's `alias` attribute enables short commands (ls, mv)
+6. **Unified commands:** `edit --status` and `depend --remove` consolidate workflow
 
 ### 10.2 Extension Points
 
 | Extension | Required Changes |
 |-----------|------------------|
-| Task deletion | Add `delete_task()` in `core/task.rs`, handle cascading dependencies |
+| Task deletion | Add `delete_task()` in `core/task.rs`, use `deleted_at` timestamp, handle cascading dependencies |
 | Multiple targets | Change `config.target_id` to a separate `targets` table |
 | Time tracking | Add `duration_ms` column, compute on `complete_task()` |
 | Task templates | New `templates` table, `create_from_template()` function |
 
 ---
 
-This architecture document provides the foundation for implementing `tt` v1.0. All design decisions prioritize correctness, simplicity, and the AI-driven workflow described in the specification.
+## 11. Planned Refinements (from PLAN.md)
+
+### 11.1 P0 Critical Changes
+
+**1. Require Description and DOD on Task Creation**
+- Update schema: `description TEXT NOT NULL`, `dod TEXT NOT NULL`
+- Update all create_task functions to enforce required fields
+- Migration needed for existing databases
+
+**2. Unified `edit --status` Command**
+- Add `--status` field to `tt edit` command
+- Map status transitions to existing state machine functions:
+  - `in_progress` → `start_task()`
+  - `pending` → `stop_task()` or `unblock_task()`
+  - `completed` → `complete_task()`
+  - `blocked` → `block_task()`
+- Remove separate `tt start`, `tt stop`, `tt done` commands
+- Remove separate MCP tools: `start_task`, `stop_task`, `complete_task`
+
+**3. Unified `depend --remove` Command**
+- Add `--remove` flag to `tt depend` command
+- Create unified MCP tool `manage_dependency`
+- Remove `tt undepend` command
+- Remove MCP tools: `add_dependency`, `remove_dependency`
+
+### 11.2 P2 Optional Features
+
+**11. CLI Aliases**
+- `tt ls` → `tt list`
+- `tt mv` → `tt reorder`
+
+**12. Error Message Enhancement**
+- `AnotherTaskActive` error should include both ID and title
+
+**13. Task Splitting**
+- `tt split <id>` to break task into subtasks
+- Original task deleted, dependents now depend on all new tasks
+
+**14. Task Deletion**
+- Soft delete with `deleted_at` timestamp
+- Hard delete with `--hard` flag
+
+**15. Task Restart**
+- `tt restart <id>` moves completed task back to pending
+
+**16. Batch Operations (MCP)**
+- `batch` tool for multiple operations in one call
+
+**17. Upsert Task (MCP)**
+- `upsert_task` for create-or-update semantics
+
+---
+
+## 12. Migration Path
+
+Current implementation uses the old command structure. Migration path:
+
+1. **Phase 1 (P0):** Implement critical refinements
+   - Add NOT NULL constraints to schema
+   - Add `--status` to edit, remove old workflow commands
+   - Add `--remove` to depend, remove undepend command
+   - Update MCP tools to match
+
+2. **Phase 2 (P2):** Implement optional features
+   - Add CLI aliases
+   - Add task splitting, deletion, restart
+   - Add batch operations and upsert
+
+**No backward compatibility needed:** This tool has zero users. Clean break is acceptable.
+
+---
+
+This architecture document provides the foundation for implementing `tt` v3.0. All design decisions prioritize correctness, simplicity, and the AI-driven workflow described in the specification. The current implementation is ~85% complete with a solid three-tier architecture foundation.
+
+Most P0 features have been implemented:
+- ✅ Required fields enforcement (at completion time, not creation)
+- ✅ Unified `edit --status` and `edit --action` commands
+- ✅ Unified `depend --remove` command  
+- ✅ CLI aliases (ls, mv)
+- ✅ Task splitting
+- ✅ Task deletion (via archive)
+- ✅ Task restart
+- ✅ Focus system (renamed from target)
+- ✅ Dump/Restore commands for export/import

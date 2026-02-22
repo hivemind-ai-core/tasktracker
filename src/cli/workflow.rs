@@ -1,8 +1,8 @@
-//! Workflow commands (start, stop, done, block, unblock, current)
+//! Workflow commands (start, stop, done, advance, block, unblock, current)
 
 use crate::core::{
-    block_task, complete_task, get_current_task, get_task_artifacts, start_task, stop_task,
-    unblock_task,
+    advance_task, block_task, block_tasks, complete_task, get_current_task, get_task_artifacts,
+    start_task, stop_task, unblock_task, unblock_tasks,
 };
 use crate::error::Result;
 use rusqlite::Connection;
@@ -46,20 +46,42 @@ pub fn run_done(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Block a task
-pub fn run_block(conn: &Connection, id: i64) -> Result<()> {
-    let task = block_task(conn, id)?;
-
-    println!("Blocked: [#{}] {}", task.id, task.title);
+/// Block one or more tasks
+pub fn run_block(conn: &Connection, ids: Vec<i64>) -> Result<()> {
+    if ids.len() == 1 {
+        // Single task
+        let task = block_task(conn, ids[0])?;
+        println!("Blocked: [#{}] {}", task.id, task.title);
+    } else {
+        // Bulk block
+        let results = block_tasks(conn, ids);
+        for result in results {
+            match result {
+                Ok(task) => println!("Blocked: [#{}] {}", task.id, task.title),
+                Err(e) => println!("Error: {}", e),
+            }
+        }
+    }
 
     Ok(())
 }
 
-/// Unblock a task
-pub fn run_unblock(conn: &Connection, id: i64) -> Result<()> {
-    let task = unblock_task(conn, id)?;
-
-    println!("Unblocked: [#{}] {}", task.id, task.title);
+/// Unblock one or more tasks
+pub fn run_unblock(conn: &Connection, ids: Vec<i64>) -> Result<()> {
+    if ids.len() == 1 {
+        // Single task
+        let task = unblock_task(conn, ids[0])?;
+        println!("Unblocked: [#{}] {}", task.id, task.title);
+    } else {
+        // Bulk unblock
+        let results = unblock_tasks(conn, ids);
+        for result in results {
+            match result {
+                Ok(task) => println!("Unblocked: [#{}] {}", task.id, task.title),
+                Err(e) => println!("Error: {}", e),
+            }
+        }
+    }
 
     Ok(())
 }
@@ -84,6 +106,62 @@ pub fn run_current(conn: &Connection) -> Result<()> {
         println!("  Artifacts:");
         for artifact in artifacts {
             println!("    - {}: {}", artifact.name, artifact.file_path);
+        }
+    }
+
+    Ok(())
+}
+
+/// Advance workflow: complete current task and start the next one
+pub fn run_advance(conn: &Connection, dry_run: bool) -> Result<()> {
+    let result = advance_task(conn, dry_run)?;
+
+    if dry_run {
+        println!("Dry run:");
+        match result.completed {
+            Some(task) => println!("  Would complete: [#{}] {}", task.id, task.title),
+            None => println!("  No current task to complete"),
+        }
+        match result.started {
+            Some(task) => println!("  Would start: [#{}] {}", task.id, task.title),
+            None => println!("  No next task to start"),
+        }
+    } else {
+        match result.completed {
+            Some(task) => println!("Completed: [#{}] {}", task.id, task.title),
+            None => println!("No current task to complete"),
+        }
+        match result.started {
+            Some(task) => {
+                println!("Started: [#{}] {}", task.id, task.title);
+            }
+            None => {
+                // Check if it's because there are no tasks or all blocked
+                match crate::core::find_next_runnable(conn)? {
+                    Some(_) => println!("No next task available"),
+                    None => {
+                        // Check if all remaining are blocked
+                        let all_tasks = crate::db::tasks::get_all_tasks(conn)?;
+                        let incomplete: Vec<_> = all_tasks
+                            .iter()
+                            .filter(|t| t.status != crate::core::TaskStatus::Completed)
+                            .collect();
+                        if incomplete.is_empty() {
+                            println!("All tasks completed!");
+                        } else {
+                            let blocked_count = incomplete
+                                .iter()
+                                .filter(|t| t.status == crate::core::TaskStatus::Blocked)
+                                .count();
+                            if blocked_count == incomplete.len() {
+                                println!("All remaining tasks are blocked.");
+                            } else {
+                                println!("No runnable tasks available.");
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

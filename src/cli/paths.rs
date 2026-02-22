@@ -39,7 +39,6 @@ pub fn find_db_path() -> Option<PathBuf> {
         // Look for .tt/tt.db (the standard layout)
         let db_path = path.join(TT_DIR).join(DB_FILE);
         if db_path.exists() {
-            eprintln!("DEBUG: Found database at: {:?}", db_path);
             return Some(db_path);
         }
 
@@ -60,10 +59,7 @@ pub fn is_initialized() -> bool {
 /// Searches upward from CWD to find the database. Exits with error if not found.
 pub fn ensure_db() -> crate::error::Result<rusqlite::Connection> {
     match find_db_path() {
-        Some(path) => {
-            eprintln!("DEBUG: CLI opening database at: {:?}", path);
-            crate::db::open_db(path)
-        }
+        Some(path) => crate::db::open_db(path),
         None => {
             eprintln!("Error: No tt project found. Run `tt init` first.");
             std::process::exit(1);

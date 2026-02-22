@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 /// Log an artifact
 pub fn run_log(conn: &Connection, name: &str, file: &str) -> Result<()> {
-    let artifact = log_artifact(conn, name, file)?;
+    let artifact = log_artifact(conn, name, file, None)?;
 
     println!(
         "Logged artifact '{}' for task #{}: {}",

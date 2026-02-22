@@ -41,7 +41,7 @@ sequenceDiagram
 - **MCP transport:** stdio only (the AI client spawns `tt mcp` as a child process).
 - **Error handling:** `thiserror` for the error enum.
 - **Timestamps:** `chrono` with `serde` feature.
-- **Serialization:** `serde` and `serde_json`.
+- **Serialization:** `serde`, `serde_json`, and `toml`.
 
 ---
 
@@ -83,14 +83,15 @@ erDiagram
     TASKS {
         integer id PK "auto-increment"
         text title "required"
-        text description "optional"
-        text dod "Definition of Done, optional"
+        text description "required"
+        text dod "Definition of Done, required"
         text status "pending|in_progress|completed|blocked"
         real manual_order "float for ordering"
         text created_at "auto"
         text started_at "nullable"
         text completed_at "nullable"
         text last_touched_at "auto, updated on every mutation"
+        boolean deleted "soft delete flag"
     }
 
     DEPENDENCIES {
@@ -122,6 +123,7 @@ erDiagram
 - `dependencies` table: composite PK on `(task_id, depends_on)`. CHECK constraint: `task_id != depends_on`.
 - All datetime columns store ISO 8601 strings (`strftime('%Y-%m-%dT%H:%M:%S', 'now')`).
 - Indexes on: `tasks(status)`, `tasks(manual_order)`, `dependencies(task_id)`, `dependencies(depends_on)`, `artifacts(task_id)`.
+- `deleted` column: Boolean flag for soft delete (archive). Deleted tasks are hidden from normal operations.
 
 ### 4.3 Config Table
 
@@ -140,8 +142,9 @@ These rules must **always** hold. Every command and every code path must enforce
 | 3 | **No cycles.** The dependency graph must be a DAG. Adding an edge that creates a cycle must be rejected BEFORE committing. | Fail with the full cycle path as a list of task IDs. |
 | 4 | **DoD required for completion.** A task cannot move to `completed` if its `dod` field is null or empty. | Fail instructing the user to set a DoD. |
 | 5 | **Topological correctness.** `list` and `next` output must always respect the dependency graph. A prerequisite must never appear after its dependent. | This is a correctness property of the sorting algorithm, not a runtime check. |
-| 6 | **No deletion.** v1 does not support deleting tasks. | Return "not supported" error. |
-| 7 | **Every mutation updates `last_touched_at`.** | Enforced in the database layer. |
+| 6 | **Every mutation updates `last_touched_at`.** | Enforced in the database layer. |
+| 7 | **Description and DoD required on creation.** Task creation requires both `description` and `dod` fields. | Empty strings allowed if the field is truly optional. |
+| 8 | **Soft delete for deleted tasks.** Deleted tasks are marked with `deleted = true`, not removed from the database. | Hard delete with `--hard` flag removes permanently. |
 
 ---
 
@@ -161,6 +164,8 @@ stateDiagram-v2
     
     blocked --> pending: tt unblock
     
+    completed --> pending: tt restart
+    
     completed --> [*]
 
     note right of in_progress
@@ -179,13 +184,15 @@ stateDiagram-v2
 | From | To | Command | Guards | Side Effects |
 |:-----|:---|:--------|:-------|:-------------|
 | pending | in_progress | `start <id>` | No other task is `in_progress`. All deps are `completed`. | Set `started_at` to now. |
+| pending | in_progress | `start` (no ID) | Same as above, but selects next available task automatically. | Set `started_at` to now. |
 | in_progress | pending | `stop` | A task must be active. | Does NOT clear `started_at`. |
 | in_progress | completed | `done` | A task must be active. `dod` must be non-empty. | Set `completed_at` to now. |
-| pending | blocked | `block <id>` | Task must be `pending`. | — |
-| in_progress | blocked | `block <id>` | Task must be `in_progress`. | Clears the active slot. |
-| blocked | pending | `unblock <id>` | Task must be `blocked`. | — |
+| pending | blocked | `block <id> [<ids>...]` | Task must be `pending`. | — |
+| in_progress | blocked | `block <id> [<ids>...]` | Task must be `in_progress`. | Clears the active slot. |
+| blocked | pending | `unblock <id> [<ids>...]` | Task must be `blocked`. | — |
+| completed | pending | `restart <id>` | Task must be `completed`. | Clears `completed_at`, resets status to `pending`. |
 
-No other transitions are valid. `completed` is a terminal state. Attempting an invalid transition (e.g., starting a `blocked` task, completing a `pending` task) returns a clear error.
+No other transitions are valid. `completed` is not a terminal state (tasks can be restarted).
 
 **Special case:** `tt start <id>` where `<id>` is already `in_progress` should succeed as a no-op and return the task, not error.
 
@@ -227,6 +234,8 @@ After computing a topological sort, the tool should check: does any task have a 
 
 A target is a single task ID representing a milestone. When set, `tt list` and `tt next` only consider the subgraph of tasks that are **transitive dependencies** of the target, plus the target itself.
 
+**Target is optional:** If no target is set, all non-deleted tasks are considered in `list` and `next` commands.
+
 ### 8.2 Target Walk
 
 ```mermaid
@@ -254,9 +263,9 @@ To compute the relevant subgraph, use a **recursive CTE** in SQLite:
 
 ### 8.3 Behaviour
 
-- `tt next` and `tt list` (without `--all`) only operate on the active subgraph.
-- `tt list --all` shows every task in the database.
-- If no target is set, `tt next` and `tt list` (without `--all`) return an error: "No target set."
+- `tt next` and `tt list` (without `--all`) operate on the active subgraph if a target is set, otherwise all non-deleted tasks.
+- `tt list --all` shows every non-deleted task in the database.
+- If no target is set, `tt next` and `tt list` consider all non-deleted tasks.
 - If the active subgraph is empty (all done), return "Target Reached."
 
 ---
@@ -324,30 +333,39 @@ All other commands fail with a clear error if `tt.db` is not found in the curren
 
 | Command | Behaviour |
 |:--------|:----------|
-| `tt add "<title>"` | Creates a task. Optional flags: `--desc`, `--dod`, `--after <id>`, `--before <id>`. Prints the new task ID. |
+| `tt add "<title>" "<description>" "<dod>"` | Creates a task with all required fields. Optional flags: `--depends-on <ids...>`, `--after <id>`, `--before <id>`. Prints the new task ID. Empty strings allowed for optional fields. |
 | `tt edit <id>` | Updates fields. Flags: `--title`, `--desc`, `--dod`. Only provided fields are changed. |
-| `tt show <id>` | Prints full task detail (see Section 13). |
-| `tt list` | Prints target subgraph in topological order. `--all` flag shows every task. |
+| `tt show <id> [<ids>...]` | Prints full task detail for one or more tasks (see Section 13). |
+| `tt list` | Prints target subgraph in topological order. `--all` flag shows every task. `--status` filters by status. `--limit` and `--offset` for pagination. |
+| `tt split <id> <title1> <desc1> <dod1> [, <title2> <desc2> <dod2>, ...]` | Splits a task into multiple subtasks. Original task is deleted. Dependents of original now depend on ALL new tasks. |
+| `tt delete <id>` | Soft delete (archive) a task. `--hard` for permanent delete. |
+| `tt restart <id>` | Moves a completed task back to pending, clearing timestamps. |
 
 ### 11.3 Workflow
 
 | Command | Behaviour |
 |:--------|:----------|
+| `tt target` | Shows current target. |
 | `tt target <id>` | Sets the target. Verifies the task exists. |
+| `tt target none` / `tt target clear` | Clears the target (shows all tasks). |
+| `tt target --next` | Targets the next incomplete task. |
+| `tt target --last` | Targets the most recent task. |
 | `tt next` | Prints the next task to work on (see Section 9.2). |
+| `tt start` | Starts the next available runnable task (no ID required). |
 | `tt start <id>` | Moves task to `in_progress` (see Section 6). |
 | `tt stop` | Moves active task back to `pending`. |
 | `tt done` | Moves active task to `completed`. |
-| `tt block <id>` | Moves task to `blocked`. |
-| `tt unblock <id>` | Moves blocked task to `pending`. |
+| `tt advance` | Completes current task and starts next runnable task in one command. `--dry-run` to preview. |
+| `tt block <id> [<ids>...]` | Moves tasks to `blocked`. Supports multiple IDs. |
+| `tt unblock <id> [<ids>...]` | Moves blocked tasks to `pending`. Supports multiple IDs. |
 | `tt current` | Prints active task details and artifacts. Errors if nothing is active. |
 
 ### 11.4 Dependencies
 
 | Command | Behaviour |
 |:--------|:----------|
-| `tt depend <id> <on_id>` | Task `<id>` depends on task `<on_id>`. Fails on cycle (with cycle path in error). |
-| `tt undepend <id> <on_id>` | Removes a dependency. |
+| `tt depend <id> on <id> [<id>...]` | Task `<id>` depends on task(s) `<id>...`. Fails on cycle (with cycle path in error). Supports bulk dependencies. |
+| `tt undepend <id> from <id> [<id>...]` | Removes dependency(ies). Supports bulk removal. |
 
 ### 11.5 Artifacts
 
@@ -368,6 +386,20 @@ All other commands fail with a clear error if `tt.db` is not found in the curren
 | Command | Behaviour |
 |:--------|:----------|
 | `tt mcp` | Starts the MCP server over stdio. Does not return until the client disconnects. |
+
+### 11.8 Import/Export
+
+| Command | Behaviour |
+|:--------|:----------|
+| `tt dump <file>` | Exports the entire database to a TOML file. Includes all tasks, dependencies, artifacts, and config (target). |
+| `tt restore <file>` | Imports tasks from a TOML file. Replaces tasks with matching IDs. Clears existing dependencies and artifacts before importing. |
+
+### 11.9 Aliases
+
+| Alias | Expands to |
+|:------|:-----------|
+| `tt ls` | `tt list` |
+| `tt mv` | `tt reorder` |
 
 ---
 
@@ -460,21 +492,30 @@ Every CLI command from Section 11 (except `init`, `mcp`, `reindex`) should be ex
 |:----------|:-----------|:--------|
 | `get_next_task` | (none) | Next task object or "Target Reached" / blocked list |
 | `get_current_task` | (none) | Active task + artifacts |
-| `start_task` | `{ id: int }` | Started task object |
+| `start_task` | `{ id?: int }` | Started task object. If `id` omitted, starts next available. |
 | `complete_task` | (none) | Completed task object |
 | `stop_task` | (none) | Stopped task object |
-| `create_task` | `{ title: str, description?: str, dod?: str, after_id?: int, before_id?: int }` | New task object |
+| `advance` | `{ dry_run?: bool }` | Complete current and start next task |
+| `create_task` | `{ title: str, description: str, dod: str, depends_on?: int[], after_id?: int, before_id?: int }` | New task object |
 | `edit_task` | `{ id: int, title?: str, description?: str, dod?: str }` | Updated task object |
-| `add_dependency` | `{ task_id: int, depends_on: int }` | Confirmation |
-| `remove_dependency` | `{ task_id: int, depends_on: int }` | Confirmation |
-| `block_task` | `{ id: int }` | Blocked task object |
-| `unblock_task` | `{ id: int }` | Unblocked task object |
-| `list_tasks` | `{ all?: bool }` | Array of task objects in sorted order |
+| `add_dependency` | `{ task_id: int, depends_on: int[] }` | Confirmation (bulk support) |
+| `remove_dependency` | `{ task_id: int, depends_on: int[] }` | Confirmation (bulk support) |
+| `block_tasks` | `{ ids: int[] }` | Blocked task objects (bulk) |
+| `unblock_tasks` | `{ ids: int[] }` | Unblocked task objects (bulk) |
+| `list_tasks` | `{ all?: bool, status?: str, limit?: int, offset?: int }` | Array of task objects in sorted order |
 | `show_task` | `{ id: int }` | Full task detail object |
+| `show_tasks` | `{ ids: int[] }` | Multiple task detail objects |
 | `log_artifact` | `{ name: str, file_path: str }` | Artifact object |
 | `get_artifacts` | `{ task_id?: int }` | Array of artifact objects |
 | `set_target` | `{ id: int }` | Confirmation |
+| `get_target` | (none) | Current target or null |
+| `clear_target` | (none) | Confirmation |
 | `reorder_task` | `{ id: int, after_id?: int, before_id?: int }` | New order value |
+| `delete_task` | `{ id: int, hard?: bool }` | Deleted task confirmation |
+| `restart_task` | `{ id: int }` | Restarted task object |
+| `split_task` | `{ id: int, subtasks: {title: str, description: str, dod: str}[] }` | New task objects |
+| `get_status` | (none) | `{ target, current_task, next_task, summary: {pending, blocked, completed, in_progress} }` |
+| `batch` | `{ operations: {tool: str, arguments: object}[] }` | Array of operation results |
 
 ### 13.3 Response Format
 
@@ -503,6 +544,7 @@ Tool descriptions are how the AI understands when and why to use each tool. Writ
 - `get_next_task`: *"Returns the next task to work on toward the current target. Call this after completing a task. If the response is TargetReached, stop working and report to the user."*
 - `log_artifact`: *"Records a file you have created as an artifact of the current task. Create the file first, then call this. Use descriptive names like 'research', 'plan', 'implementation-notes', 'test-report'."*
 - `create_task`: *"Creates a new task. If you discover during implementation that a task needs to be broken into smaller pieces, create subtasks and add dependencies."*
+- `advance`: *"Completes the current task and starts the next available task in one operation. Use this to efficiently move through your workflow."*
 
 ---
 
@@ -536,7 +578,7 @@ The implementation should define a single error enum. Each variant should produc
 | `NoActiveTask` | `stop`, `done`, `log` with no active task | "No task is currently in progress" |
 | `UnmetDependencies(id, Vec<id>)` | `start` with unmet deps | "Cannot start #\{id\}: dependencies not completed: #X, #Y" |
 | `CycleDetected(from, to, Vec<id>)` | `depend` would create cycle | "Adding #\{from\} → #\{to\} would create a cycle: #A → #B → #C → #A" |
-| `NoTarget` | `next` or `list` without target | "No target set. Use \`tt target <id>\` first." |
+| `NoTarget` | `next` or `list` without target (optional - only if strict target mode) | "No target set. Use \`tt target <id>\` first." |
 | `TargetReached(id)` | `next` when all done | "Target reached. All tasks for #\{id\} are completed." |
 | `NoDod(id)` | `done` with no DoD | "Task #\{id\} has no definition of done. Set one with \`tt edit \{id\} --dod\`" |
 | `OrderConflict(...)` | Warning only, after sort | "Warning: #\{id\} (order \{x\}) depends on #\{dep\} (order \{y\}) which has higher manual\_order" |
@@ -552,13 +594,15 @@ The implementation should define a single error enum. Each variant should produc
 1. **Float precision:** If `midpoint(a, b)` returns a value `== a` or `== b`, fail and suggest `tt reindex`.
 2. **Multiple targets:** v1 supports one target. Setting a new one overwrites the old.
 3. **Orphan tasks:** Tasks not in any target subgraph are only visible via `tt list --all` and `tt show <id>`.
-4. **Re-starting a completed task:** Not allowed. `completed` is terminal in v1.
+4. **Re-starting a completed task:** Allowed via `tt restart <id>`. Task moves to `pending`, clearing `completed_at`.
 5. **Idempotent start:** `tt start <id>` where `<id>` is already `in_progress` succeeds as a no-op.
 6. **Concurrent access:** v1 assumes single-writer. SQLite WAL provides safe concurrent reads.
 7. **Database location:** Always `tt.db` in the `.tt/` directory.
 8. **Empty database:** `tt list` with no tasks prints nothing. `tt next` says "No target set" or "Target Reached" as appropriate.
 9. **Dependency on completed task:** Allowed and valid. A completed task is a satisfied dependency.
 10. **Blocking the active task:** `tt block <id>` where `<id>` is active should move it to `blocked` and clear the active slot.
+11. **Bulk operations:** Most commands accepting IDs now accept multiple IDs for batch operations.
+12. **Task creation with dependencies:** The `depends_on` parameter allows creating a task and setting its dependencies in one operation.
 
 ---
 
@@ -589,6 +633,9 @@ The implementor should write tests covering these scenarios. The structure and f
 | Unblock a pending task | Error (must be blocked) |
 | Complete a pending task directly | Error (must be in\_progress) |
 | Start an already-in-progress task | No-op success |
+| Start without ID (next available) | Starts next runnable task |
+| Advance command | Completes current, starts next |
+| Restart completed task | Moves to pending, clears completed_at |
 
 ### 17.3 Target Walk
 
@@ -598,19 +645,29 @@ The implementor should write tests covering these scenarios. The structure and f
 | Target with no dependencies | Subgraph is just the target |
 | All tasks completed | "Target Reached" |
 | All remaining blocked | Error listing blocked tasks |
+| No target set | Shows all tasks |
 
-### 17.4 End-to-End (CLI Integration)
+### 17.4 Bulk Operations
+
+| Scenario | Expected |
+|:---------|:---------|
+| Block multiple tasks | All specified tasks blocked |
+| Add multiple dependencies | All deps added, cycle check on each |
+| Show multiple tasks | All task details returned |
+| Delete with --hard | Task permanently removed |
+
+### 17.5 End-to-End (CLI Integration)
 
 Run the built binary as a subprocess and verify output:
 
 1. `tt init` → creates `.tt/tt.db` and `.tt/artifacts/`.
-2. `tt add "Task A"` → prints ID 1.
-3. `tt add "Task B"` → prints ID 2.
-4. `tt depend 2 1` → success.
+2. `tt add "Task A" "desc" "done"` → prints ID 1.
+3. `tt add "Task B" "desc" "done" --depends-on 1` → prints ID 2 with dep.
+4. `tt depend 2 on 1` → success.
 5. `tt target 2` → success.
 6. `tt next` → returns Task 1.
 7. `tt start 1` → success.
-8. `tt done` → error (no DoD).
+8. `tt done` → error (no DoD - if not provided).
 9. `tt edit 1 --dod "Schema exists"` → success.
 10. `tt done` → success.
 11. `tt next` → returns Task 2.
@@ -618,6 +675,7 @@ Run the built binary as a subprocess and verify output:
 13. `tt start 2` → success.
 14. `tt done` → success.
 15. `tt next` → "Target Reached."
+16. `tt advance` → Completes current and starts next in one command.
 
 ---
 
@@ -625,10 +683,11 @@ Run the built binary as a subprocess and verify output:
 
 These are explicitly **not** part of this spec but are worth noting for future versions:
 
-- **Task deletion** with cascading dependency cleanup.
 - **Multiple targets** / task groups.
 - **Time tracking** (duration between `started_at` and `completed_at`).
 - **Priority field** separate from `manual_order`.
 - **Task templates** for common patterns (e.g., "RPI task" auto-creates research → plan → implement subtasks).
 - **Export/import** to/from markdown files.
 - **Web UI** reading from the same SQLite database.
+- **Tree view** (`tt tree`) for dependency visualization.
+- **Stats** (`tt stats`) for project statistics.

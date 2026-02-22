@@ -99,22 +99,16 @@ mod file_tests {
     
     use super::*;
     use std::path::PathBuf;
-    use std::fs;
     
-    fn setup_file_db() -> PathBuf {
-        let test_dir = "/tmp/tt_file_conn_test";
-        let db_path = PathBuf::from(format!("{}/test.db", test_dir));
-        
-        // Cleanup
-        let _ = fs::remove_dir_all(test_dir);
-        fs::create_dir_all(test_dir).unwrap();
-        
-        db_path
+    fn setup_file_db() -> (tempfile::TempDir, PathBuf) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        (temp_dir, db_path)
     }
     
     #[test]
     fn test_file_db_basic_persistence() {
-        let db_path = setup_file_db();
+        let (_temp_dir, db_path) = setup_file_db();
         
         // Create table and insert
         {
@@ -150,7 +144,7 @@ mod file_tests {
     #[test]
     fn test_file_db_trigger_side_effect() {
         //! Test that trigger side effects persist correctly
-        let db_path = setup_file_db();
+        let (_temp_dir, db_path) = setup_file_db();
         
         // Create table with trigger (similar to our schema)
         {

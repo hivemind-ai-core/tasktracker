@@ -318,6 +318,7 @@ mod tests {
             started_at: None,
             completed_at: None,
             last_touched_at: "2025-06-01T10:00:00".to_string(),
+            deleted: false,
         }
     }
 

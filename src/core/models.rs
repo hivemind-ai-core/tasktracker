@@ -16,6 +16,8 @@ pub enum TaskStatus {
     Completed,
     /// Task is blocked and cannot be started
     Blocked,
+    /// Task was cancelled (terminal state)
+    Cancelled,
 }
 
 impl TaskStatus {
@@ -26,6 +28,7 @@ impl TaskStatus {
             "in_progress" => Ok(TaskStatus::InProgress),
             "completed" => Ok(TaskStatus::Completed),
             "blocked" => Ok(TaskStatus::Blocked),
+            "cancelled" => Ok(TaskStatus::Cancelled),
             _ => Err(crate::error::Error::InvalidStatus(s.to_string())),
         }
     }
@@ -37,6 +40,7 @@ impl TaskStatus {
             TaskStatus::InProgress => "in_progress",
             TaskStatus::Completed => "completed",
             TaskStatus::Blocked => "blocked",
+            TaskStatus::Cancelled => "cancelled",
         }
     }
 
@@ -45,7 +49,6 @@ impl TaskStatus {
         matches!(self, TaskStatus::Pending)
     }
 
-    /// Check if this status allows blocking
     pub fn can_block(&self) -> bool {
         matches!(self, TaskStatus::Pending | TaskStatus::InProgress)
     }
@@ -55,6 +58,16 @@ impl TaskStatus {
         matches!(self, TaskStatus::Blocked)
     }
 
+    /// Check if this status allows cancelling
+    pub fn can_cancel(&self) -> bool {
+        matches!(self, TaskStatus::Pending | TaskStatus::InProgress)
+    }
+
+    /// Check if this status is terminal (cannot transition)
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, TaskStatus::Completed | TaskStatus::Cancelled)
+    }
+
     /// Get display character for CLI
     pub fn display_char(&self) -> char {
         match self {
@@ -62,6 +75,7 @@ impl TaskStatus {
             TaskStatus::InProgress => '●',
             TaskStatus::Completed => '✓',
             TaskStatus::Blocked => '✗',
+            TaskStatus::Cancelled => '✕',
         }
     }
 }
@@ -69,6 +83,35 @@ impl TaskStatus {
 impl std::fmt::Display for TaskStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_db())
+    }
+}
+
+/// Actions that can be performed on a task via edit
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditAction {
+    /// Complete the active task
+    Complete,
+    /// Stop the active task (return to pending)
+    Stop,
+    /// Cancel a task
+    Cancel,
+    /// Block a task
+    Block,
+    /// Unblock a task
+    Unblock,
+}
+
+impl EditAction {
+    pub fn from_str(s: &str) -> crate::error::Result<Self> {
+        match s {
+            "complete" => Ok(EditAction::Complete),
+            "stop" => Ok(EditAction::Stop),
+            "cancel" => Ok(EditAction::Cancel),
+            "block" => Ok(EditAction::Block),
+            "unblock" => Ok(EditAction::Unblock),
+            _ => Err(crate::error::Error::InvalidStatus(s.to_string())),
+        }
     }
 }
 
@@ -85,6 +128,8 @@ pub struct Task {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub last_touched_at: String,
+    #[serde(skip)]
+    pub deleted: bool,
 }
 
 /// A dependency edge: task_id depends on depends_on
@@ -185,6 +230,7 @@ mod tests {
             started_at: None,
             completed_at: None,
             last_touched_at: "2025-06-01T10:00:00".to_string(),
+            deleted: false,
         };
 
         let json = serde_json::to_string(&task).unwrap();

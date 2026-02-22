@@ -3,17 +3,21 @@
 //! Thin dispatchers that parse arguments and call core operations.
 
 pub mod add;
+pub mod archive;
 pub mod artifacts;
 pub mod dependencies;
+pub mod dump;
 pub mod edit;
+pub mod focus;
 pub mod init;
 pub mod install;
 pub mod list;
 pub mod mcp;
 pub mod ordering;
 pub mod paths;
+pub mod restore;
 pub mod show;
-pub mod target;
+pub mod split;
 pub mod workflow;
 
 pub use paths::ensure_db;
@@ -30,18 +34,19 @@ pub enum Commands {
     Add {
         /// Task title
         title: String,
-        /// Optional description
-        #[arg(long)]
-        desc: Option<String>,
-        /// Optional definition of done
-        #[arg(long)]
-        dod: Option<String>,
+        /// Task description (can be empty string "")
+        description: String,
+        /// Definition of done (can be empty string "")
+        dod: String,
         /// Insert after this task ID
         #[arg(long)]
         after: Option<i64>,
         /// Insert before this task ID
         #[arg(long)]
         before: Option<i64>,
+        /// Task ID(s) this task depends on
+        #[arg(long)]
+        depends_on: Vec<i64>,
     },
     /// Edit a task
     Edit {
@@ -56,59 +61,60 @@ pub enum Commands {
         /// New definition of done
         #[arg(long)]
         dod: Option<String>,
+        /// Set task status directly (pending, in_progress, completed, blocked, cancelled)
+        #[arg(long)]
+        status: Option<String>,
+        /// Action to perform on task (complete, stop, cancel, block, unblock)
+        #[arg(long)]
+        action: Option<String>,
     },
-    /// Show task details
+    /// Show task details (one or more)
     Show {
-        /// Task ID
-        id: i64,
+        /// Task ID(s)
+        ids: Vec<i64>,
     },
-    /// List tasks
+    /// List tasks with optional filtering
+    #[command(alias = "ls")]
     List {
-        /// Show all tasks (not just target subgraph)
+        /// Show all tasks (not just focused subgraph)
         #[arg(long)]
         all: bool,
+        /// Show only archived tasks
+        #[arg(long)]
+        archived: bool,
+        /// Filter by status (pending, in_progress, completed, blocked)
+        #[arg(long)]
+        status: Option<String>,
+        /// Limit number of results
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Offset for pagination
+        #[arg(long)]
+        offset: Option<usize>,
     },
-    /// Set target task
-    Target {
-        /// Task ID
-        id: i64,
+    /// Focus task operations (set, show, clear, next, last)
+    Focus {
+        #[command(subcommand)]
+        action: FocusCommand,
     },
-    /// Show next task to work on
-    Next,
-    /// Start a task
-    Start {
-        /// Task ID (defaults to next task if not specified)
-        id: Option<i64>,
-    },
-    /// Stop the active task
-    Stop,
-    /// Complete the active task
-    Done,
-    /// Block a task
-    Block {
-        /// Task ID
-        id: i64,
-    },
-    /// Unblock a task
-    Unblock {
-        /// Task ID
-        id: i64,
+    /// Complete current task and start the next one
+    Advance {
+        /// Preview without executing
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Show current active task
     Current,
-    /// Add a dependency
+    /// Manage dependencies (add or remove)
     Depend {
         /// Task ID (the dependent)
         id: i64,
-        /// Task ID to depend on (the prerequisite)
-        on_id: i64,
-    },
-    /// Remove a dependency
-    Undepend {
-        /// Task ID (the dependent)
-        id: i64,
-        /// Task ID to stop depending on (the prerequisite)
-        on_id: i64,
+        /// Task ID(s) to depend on (the prerequisites)
+        #[arg(required = true)]
+        on_ids: Vec<i64>,
+        /// Remove dependencies instead of adding
+        #[arg(long, short)]
+        remove: bool,
     },
     /// Log an artifact for the active task
     Log {
@@ -125,6 +131,7 @@ pub enum Commands {
         task: Option<i64>,
     },
     /// Reorder a task
+    #[command(alias = "mv")]
     Reorder {
         /// Task ID
         id: i64,
@@ -137,6 +144,21 @@ pub enum Commands {
     },
     /// Reindex all task orders
     Reindex,
+    /// Split a task into subtasks
+    Split {
+        /// Task ID to split
+        id: i64,
+        /// Subtask definitions in format: "title" "description" "dod"
+        /// Can specify multiple: "title1" "desc1" "dod1" "title2" "desc2" "dod2"
+        #[arg(required = true)]
+        parts: Vec<String>,
+    },
+    /// Archive completed tasks
+    Archive {
+        /// Archive all completed tasks
+        #[command(subcommand)]
+        action: ArchiveCommand,
+    },
     /// Start MCP server
     Mcp,
     /// Install tt as an MCP server in AI coding tools
@@ -151,6 +173,16 @@ pub enum Commands {
         #[arg(long)]
         local: bool,
     },
+    /// Dump database to a TOML file
+    Dump {
+        /// Output file path
+        file: String,
+    },
+    /// Restore database from a TOML file
+    Restore {
+        /// Input file path
+        file: String,
+    },
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -160,83 +192,97 @@ pub enum InstallTool {
     Kimi,
 }
 
+#[derive(Subcommand, Clone, Debug)]
+pub enum ArchiveCommand {
+    /// Archive all completed tasks
+    All,
+}
+
+/// Focus subcommands
+#[derive(Subcommand)]
+pub enum FocusCommand {
+    /// Show current focus
+    Show,
+    /// Set focus to a specific task
+    Set { id: i64 },
+    /// Clear the focus
+    Clear,
+    /// Set focus to next incomplete task (lowest manual_order pending)
+    Next,
+    /// Set focus to most recent task (highest id)
+    Last,
+}
+
 /// Dispatch a command to its handler
 pub fn dispatch(cmd: Commands) -> Result<()> {
     match cmd {
         Commands::Init => init::run(),
         Commands::Add {
             title,
-            desc,
+            description,
             dod,
             after,
             before,
+            depends_on,
         } => {
             let conn = ensure_db()?;
-            add::run(
-                &conn,
-                &title,
-                desc.as_deref(),
-                dod.as_deref(),
-                after,
-                before,
-            )
+            add::run(&conn, &title, &description, &dod, after, before, depends_on)
         }
         Commands::Edit {
             id,
             title,
             desc,
             dod,
+            status,
+            action,
         } => {
             let conn = ensure_db()?;
-            edit::run(&conn, id, title.as_deref(), desc.as_deref(), dod.as_deref())
+            edit::run(
+                &conn,
+                id,
+                title.as_deref(),
+                desc.as_deref(),
+                dod.as_deref(),
+                status,
+                action,
+            )
         }
-        Commands::Show { id } => {
+        Commands::Show { ids } => {
             let conn = ensure_db()?;
-            show::run(&conn, id)
+            show::run(&conn, ids)
         }
-        Commands::List { all } => {
+        Commands::List {
+            all,
+            archived,
+            status,
+            limit,
+            offset,
+        } => {
             let conn = ensure_db()?;
-            list::run(&conn, all)
+            list::run(&conn, all, archived, status, limit, offset)
         }
-        Commands::Target { id } => {
+        Commands::Focus { action } => {
             let conn = ensure_db()?;
-            target::run_set(&conn, id)
+            match action {
+                FocusCommand::Show => focus::run_show(&conn),
+                FocusCommand::Set { id } => focus::run_set(&conn, id),
+                FocusCommand::Clear => focus::run_clear(&conn),
+                FocusCommand::Next => focus::run_target_next(&conn),
+                FocusCommand::Last => focus::run_target_last(&conn),
+            }
         }
-        Commands::Next => {
+
+        Commands::Advance { dry_run } => {
             let conn = ensure_db()?;
-            target::run_next(&conn)
-        }
-        Commands::Start { id } => {
-            let conn = ensure_db()?;
-            workflow::run_start(&conn, id)
-        }
-        Commands::Stop => {
-            let conn = ensure_db()?;
-            workflow::run_stop(&conn)
-        }
-        Commands::Done => {
-            let conn = ensure_db()?;
-            workflow::run_done(&conn)
-        }
-        Commands::Block { id } => {
-            let conn = ensure_db()?;
-            workflow::run_block(&conn, id)
-        }
-        Commands::Unblock { id } => {
-            let conn = ensure_db()?;
-            workflow::run_unblock(&conn, id)
+            workflow::run_advance(&conn, dry_run)
         }
         Commands::Current => {
             let conn = ensure_db()?;
             workflow::run_current(&conn)
         }
-        Commands::Depend { id, on_id } => {
+        Commands::Depend { id, on_ids, remove } => {
             let conn = ensure_db()?;
-            dependencies::run_depend(&conn, id, on_id)
-        }
-        Commands::Undepend { id, on_id } => {
-            let conn = ensure_db()?;
-            dependencies::run_undepend(&conn, id, on_id)
+            dependencies::run_depend(&conn, id, on_ids, remove)
         }
         Commands::Log { name, file } => {
             let conn = ensure_db()?;
@@ -254,11 +300,31 @@ pub fn dispatch(cmd: Commands) -> Result<()> {
             let conn = ensure_db()?;
             ordering::run_reindex(&conn)
         }
+        Commands::Split { id, parts } => {
+            let conn = ensure_db()?;
+            split::run(&conn, id, parts)
+        }
+        Commands::Archive { action } => {
+            let conn = ensure_db()?;
+            match action {
+                ArchiveCommand::All => archive::run_archive_all(&conn),
+            }
+        }
         Commands::Mcp => mcp::run(),
         Commands::Install {
             tool,
             global,
             local,
         } => install::run(tool, global, local),
+        Commands::Dump { file } => {
+            let conn = ensure_db()?;
+            let path = std::path::Path::new(&file);
+            dump::run(&conn, path)
+        }
+        Commands::Restore { file } => {
+            let conn = ensure_db()?;
+            let path = std::path::Path::new(&file);
+            restore::run(&conn, path)
+        }
     }
 }

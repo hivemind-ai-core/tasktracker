@@ -17,6 +17,9 @@ pub fn validate_transition(from: TaskStatus, to: TaskStatus, task_id: i64) -> Re
         (TaskStatus::Pending, TaskStatus::Blocked) => Ok(()),
         (TaskStatus::InProgress, TaskStatus::Blocked) => Ok(()),
         (TaskStatus::Blocked, TaskStatus::Pending) => Ok(()),
+        // Cancelled state transitions
+        (TaskStatus::Pending, TaskStatus::Cancelled) => Ok(()),
+        (TaskStatus::InProgress, TaskStatus::Cancelled) => Ok(()),
 
         // Idempotent: starting an already in-progress task
         (TaskStatus::InProgress, TaskStatus::InProgress) => Ok(()),
@@ -27,6 +30,9 @@ pub fn validate_transition(from: TaskStatus, to: TaskStatus, task_id: i64) -> Re
         (TaskStatus::Blocked, TaskStatus::Completed) => Err(Error::TaskNotPending(task_id)),
         (TaskStatus::Completed, _) => Err(Error::NotSupported(
             "Completed tasks cannot change status".to_string(),
+        )),
+        (TaskStatus::Cancelled, _) => Err(Error::NotSupported(
+            "Cancelled tasks cannot change status".to_string(),
         )),
         (from, to) => Err(Error::NotSupported(format!(
             "Cannot transition from {from:?} to {to:?}"
@@ -57,7 +63,7 @@ pub fn can_start_task(
 
     // No other task can be active
     if let Some(active) = active_task {
-        return Err(Error::AnotherTaskActive(active.id));
+        return Err(Error::AnotherTaskActive(active.id, active.title.clone()));
     }
 
     // All dependencies must be completed
@@ -129,6 +135,20 @@ pub fn can_unblock_task(task: &Task) -> Result<()> {
     Ok(())
 }
 
+/// Check if a task can be cancelled
+///
+/// Guards:
+/// - Task must be pending or in_progress
+pub fn can_cancel_task(task: &Task) -> Result<()> {
+    if !task.status.can_cancel() {
+        return Err(Error::NotSupported(format!(
+            "Cannot cancel task with status {:?}",
+            task.status
+        )));
+    }
+    Ok(())
+}
+
 /// Get the new status after a transition
 ///
 /// This is mostly for documentation, as the status is explicitly passed.
@@ -152,6 +172,7 @@ mod tests {
             started_at: None,
             completed_at: None,
             last_touched_at: "2025-06-01T10:00:00".to_string(),
+            deleted: false,
         }
     }
 
@@ -206,6 +227,24 @@ mod tests {
         assert!(matches!(result.unwrap_err(), Error::NotSupported(_)));
     }
 
+    #[test]
+    fn test_valid_pending_to_cancelled() {
+        assert!(validate_transition(TaskStatus::Pending, TaskStatus::Cancelled, 1).is_ok());
+    }
+
+    #[test]
+    fn test_valid_in_progress_to_cancelled() {
+        assert!(validate_transition(TaskStatus::InProgress, TaskStatus::Cancelled, 1).is_ok());
+    }
+
+    #[test]
+    fn test_invalid_cancelled_transitions() {
+        // Cancelled cannot transition to anything
+        let result = validate_transition(TaskStatus::Cancelled, TaskStatus::Pending, 1);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::NotSupported(_)));
+    }
+
     // --- can_start_task tests ---
 
     #[test]
@@ -236,7 +275,10 @@ mod tests {
         let active = make_task(2, TaskStatus::InProgress);
         let result = can_start_task(&task, Some(&active), &[]);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::AnotherTaskActive(2)));
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::AnotherTaskActive(2, _)
+        ));
     }
 
     #[test]
@@ -354,6 +396,43 @@ mod tests {
     fn test_cannot_unblock_in_progress_task() {
         let task = make_task(1, TaskStatus::InProgress);
         let result = can_unblock_task(&task);
+        assert!(result.is_err());
+    }
+
+    // --- can_cancel_task tests ---
+
+    #[test]
+    fn test_can_cancel_pending_task() {
+        let task = make_task(1, TaskStatus::Pending);
+        let result = can_cancel_task(&task);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_can_cancel_in_progress_task() {
+        let task = make_task(1, TaskStatus::InProgress);
+        let result = can_cancel_task(&task);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cannot_cancel_blocked_task() {
+        let task = make_task(1, TaskStatus::Blocked);
+        let result = can_cancel_task(&task);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_cancel_completed_task() {
+        let task = make_task(1, TaskStatus::Completed);
+        let result = can_cancel_task(&task);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_cancel_cancelled_task() {
+        let task = make_task(1, TaskStatus::Cancelled);
+        let result = can_cancel_task(&task);
         assert!(result.is_err());
     }
 }

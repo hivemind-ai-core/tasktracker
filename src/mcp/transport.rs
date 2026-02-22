@@ -111,7 +111,7 @@ fn error_code_from_tt(e: &crate::error::Error) -> String {
     match e {
         crate::error::Error::TaskNotFound(_) => "TaskNotFound".to_string(),
         crate::error::Error::TaskNotPending(_) => "TaskNotPending".to_string(),
-        crate::error::Error::AnotherTaskActive(_) => "AnotherTaskActive".to_string(),
+        crate::error::Error::AnotherTaskActive(..) => "AnotherTaskActive".to_string(),
         crate::error::Error::NoActiveTask => "NoActiveTask".to_string(),
         crate::error::Error::UnmetDependencies(_, _) => "UnmetDependencies".to_string(),
         crate::error::Error::CycleDetected(_, _, _) => "CycleDetected".to_string(),
