@@ -14,8 +14,18 @@ fn show_single(conn: &Connection, id: i64) -> Result<()> {
     let detail = get_task_detail_allow_archived(conn, id)?;
     let task = &detail.task;
 
-    println!("[#{}/{}] {}", task.id, task.manual_order, task.title);
-    println!("Status:       {}", task.status);
+    println!(
+        "[#{}/{}] {} {}",
+        task.id,
+        task.manual_order,
+        task.status.display_char(),
+        task.title
+    );
+    println!(
+        "Status:       {} {}",
+        task.status.display_char(),
+        task.status
+    );
 
     if let Some(ref desc) = task.description {
         println!("Description:  {desc}");

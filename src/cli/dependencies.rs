@@ -12,7 +12,7 @@ pub fn run_depend(conn: &Connection, id: i64, on_ids: Vec<i64>, remove: bool) ->
             // Single dependency
             remove_dependency(conn, id, on_ids[0])?;
             println!(
-                "Removed dependency: #{id} no longer depends on # {}",
+                "Removed dependency: #{id} no longer depends on #{}",
                 on_ids[0]
             );
         } else {

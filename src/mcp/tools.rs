@@ -660,9 +660,53 @@ impl ToolHandler for FocusHandler {
                 }))),
                 Err(e) => Ok(McpResponse::from_tt_error(e)),
             },
+            "next" => {
+                let all_tasks = crate::db::tasks::get_all_tasks(db).map_err(|e| e.to_string())?;
+                let next_task = all_tasks
+                    .iter()
+                    .filter(|t| t.status == crate::core::TaskStatus::Pending)
+                    .min_by(|a, b| {
+                        a.manual_order
+                            .partial_cmp(&b.manual_order)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+
+                match next_task {
+                    Some(task) => match set_target(db, task.id) {
+                        Ok(()) => Ok(McpResponse::ok(serde_json::json!({
+                            "message": "Focus set",
+                            "target_id": task.id,
+                            "title": task.title
+                        }))),
+                        Err(e) => Ok(McpResponse::from_tt_error(e)),
+                    },
+                    None => Ok(McpResponse::ok(serde_json::json!({
+                        "message": "No pending tasks available"
+                    }))),
+                }
+            }
+            "last" => {
+                let all_tasks = crate::db::tasks::get_all_tasks(db).map_err(|e| e.to_string())?;
+                match all_tasks.iter().max_by_key(|t| t.id) {
+                    Some(task) => match set_target(db, task.id) {
+                        Ok(()) => Ok(McpResponse::ok(serde_json::json!({
+                            "message": "Focus set",
+                            "target_id": task.id,
+                            "title": task.title
+                        }))),
+                        Err(e) => Ok(McpResponse::from_tt_error(e)),
+                    },
+                    None => Ok(McpResponse::ok(serde_json::json!({
+                        "message": "No tasks available"
+                    }))),
+                }
+            }
             _ => Ok(McpResponse::error(
                 "InvalidAction",
-                &format!("Invalid action: {}. Use set, get, or clear", input.action),
+                &format!(
+                    "Invalid action: {}. Use set, get, clear, next, or last",
+                    input.action
+                ),
             )),
         }
     }
@@ -671,7 +715,7 @@ impl ToolHandler for FocusHandler {
         let schema = schemars::schema_for!(FocusInput);
         ToolMetadata::new(
             "focus",
-            "Manage focus task: set id to focus on a task, get to see current focus, clear to remove focus.",
+            "Manage focus task: set id to focus on a task, get to see current focus, clear to remove focus, next to auto-select lowest pending task, last to select most recent task.",
             serde_json::to_value(schema).unwrap(),
         )
     }

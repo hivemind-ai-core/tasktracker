@@ -416,10 +416,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_cancel_blocked_task() {
+    fn test_can_cancel_blocked_task() {
         let task = make_task(1, TaskStatus::Blocked);
         let result = can_cancel_task(&task);
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]

@@ -60,7 +60,10 @@ impl TaskStatus {
 
     /// Check if this status allows cancelling
     pub fn can_cancel(&self) -> bool {
-        matches!(self, TaskStatus::Pending | TaskStatus::InProgress)
+        matches!(
+            self,
+            TaskStatus::Pending | TaskStatus::InProgress | TaskStatus::Blocked
+        )
     }
 
     /// Check if this status is terminal (cannot transition)

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
     
     -- Status must be one of the valid values
-    CONSTRAINT chk_status CHECK (status IN ('pending', 'in_progress', 'completed', 'blocked'))
+    CONSTRAINT chk_status CHECK (status IN ('pending', 'in_progress', 'completed', 'blocked', 'cancelled'))
 );
 
 -- Dependencies table (DAG edges)

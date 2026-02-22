@@ -90,11 +90,12 @@ pub fn run(
     if !tasks.is_empty() || all {
         println!();
         println!(
-            "Legend: {} completed  {} in_progress  {} pending  {} blocked",
+            "Legend: {} completed  {} in_progress  {} pending  {} blocked  {} cancelled",
             TaskStatus::Completed.display_char(),
             TaskStatus::InProgress.display_char(),
             TaskStatus::Pending.display_char(),
             TaskStatus::Blocked.display_char(),
+            TaskStatus::Cancelled.display_char(),
         );
     }
 
