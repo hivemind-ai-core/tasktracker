@@ -1,0 +1,9 @@
+# tt task tracker
+.tt/
+# Keep artifacts directory but ignore the db
+.tt/tt.db
+.tt/tt.db-wal
+.tt/tt.db-shm
+
+# Unless you want to commit the database
+# .tt/tt.db

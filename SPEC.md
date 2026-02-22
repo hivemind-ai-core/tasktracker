@@ -488,34 +488,18 @@ stdio. The AI client spawns `tt mcp` and communicates via stdin/stdout using MCP
 
 Every CLI command from Section 11 (except `init`, `mcp`, `reindex`) should be exposed as an MCP tool. If using `clap-mcp`, this may be automatic. If implementing manually, register each tool with a name, description, input JSON Schema, and handler.
 
+The MCP interface is streamlined to 8 core tools:
+
 | Tool Name | Parameters | Returns |
 |:----------|:-----------|:--------|
-| `get_next_task` | (none) | Next task object or "Target Reached" / blocked list |
-| `get_current_task` | (none) | Active task + artifacts |
-| `start_task` | `{ id?: int }` | Started task object. If `id` omitted, starts next available. |
-| `complete_task` | (none) | Completed task object |
-| `stop_task` | (none) | Stopped task object |
-| `advance` | `{ dry_run?: bool }` | Complete current and start next task |
 | `create_task` | `{ title: str, description: str, dod: str, depends_on?: int[], after_id?: int, before_id?: int }` | New task object |
-| `edit_task` | `{ id: int, title?: str, description?: str, dod?: str }` | Updated task object |
-| `add_dependency` | `{ task_id: int, depends_on: int[] }` | Confirmation (bulk support) |
-| `remove_dependency` | `{ task_id: int, depends_on: int[] }` | Confirmation (bulk support) |
-| `block_tasks` | `{ ids: int[] }` | Blocked task objects (bulk) |
-| `unblock_tasks` | `{ ids: int[] }` | Unblocked task objects (bulk) |
-| `list_tasks` | `{ all?: bool, status?: str, limit?: int, offset?: int }` | Array of task objects in sorted order |
-| `show_task` | `{ id: int }` | Full task detail object |
-| `show_tasks` | `{ ids: int[] }` | Multiple task detail objects |
-| `log_artifact` | `{ name: str, file_path: str }` | Artifact object |
-| `get_artifacts` | `{ task_id?: int }` | Array of artifact objects |
-| `set_target` | `{ id: int }` | Confirmation |
-| `get_target` | (none) | Current target or null |
-| `clear_target` | (none) | Confirmation |
-| `reorder_task` | `{ id: int, after_id?: int, before_id?: int }` | New order value |
-| `delete_task` | `{ id: int, hard?: bool }` | Deleted task confirmation |
-| `restart_task` | `{ id: int }` | Restarted task object |
-| `split_task` | `{ id: int, subtasks: {title: str, description: str, dod: str}[] }` | New task objects |
-| `get_status` | (none) | `{ target, current_task, next_task, summary: {pending, blocked, completed, in_progress} }` |
-| `batch` | `{ operations: {tool: str, arguments: object}[] }` | Array of operation results |
+| `tt_focus` | `{ action: "set" \| "get" \| "clear", id?: int }` | Focus task or current focus |
+| `tt_advance_task` | `{ dry_run?: bool }` | Completed task + started next task |
+| `tt_get_task` | `{ id: int }` | Full task detail object |
+| `tt_list_tasks` | `{ all?: bool, status?: str, limit?: int, offset?: int, ids?: int[] }` | Array of task objects |
+| `tt_edit_task` | `{ id: int, title?: str, description?: str, dod?: str, status?: str, action?: "complete" \| "stop" \| "cancel" \| "block" \| "unblock", depends_on?: int[], remove_depends_on?: int[], after?: int, before?: int }` | Updated task object |
+| `tt_artifacts` | `{ action: "log" \| "list", file_path?: str, name?: str, id?: int }` | Artifact object or array |
+| `tt_archive_tasks` | (none) | Count of archived tasks |
 
 ### 13.3 Response Format
 
@@ -541,10 +525,14 @@ The `error_code` maps to the error variant name so the AI can react programmatic
 
 Tool descriptions are how the AI understands when and why to use each tool. Write them as instructions, not documentation. Examples:
 
-- `get_next_task`: *"Returns the next task to work on toward the current target. Call this after completing a task. If the response is TargetReached, stop working and report to the user."*
-- `log_artifact`: *"Records a file you have created as an artifact of the current task. Create the file first, then call this. Use descriptive names like 'research', 'plan', 'implementation-notes', 'test-report'."*
+- `tt_advance_task`: *"Completes the current task and starts the next available task in one operation. Use this to efficiently move through your workflow after completing a task."*
 - `create_task`: *"Creates a new task. If you discover during implementation that a task needs to be broken into smaller pieces, create subtasks and add dependencies."*
-- `advance`: *"Completes the current task and starts the next available task in one operation. Use this to efficiently move through your workflow."*
+- `tt_focus`: *"Sets, gets, or clears the focus task. When a focus is set, list_tasks only shows the focus task and its transitive dependencies."*
+- `tt_edit_task`: *"Edits a task's fields or performs actions like complete, stop, cancel, block, or unblock. Also handles dependency management via depends_on and remove_depends_on."*
+- `tt_artifacts`: *"Logs a file as an artifact of a task, or lists artifacts for a task. Use descriptive names like 'research', 'plan', 'implementation-notes', 'test-report'."*
+- `tt_list_tasks`: *"Returns tasks in topological order. Use status='pending' to get next available tasks. Use all=true to see all tasks regardless of focus."*
+- `tt_get_task`: *"Gets full details of a specific task by ID."*
+- `tt_archive_tasks`: *"Archives all completed tasks, hiding them from normal operations."*
 
 ---
 

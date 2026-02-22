@@ -70,7 +70,6 @@ pub fn ensure_db() -> crate::error::Result<rusqlite::Connection> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
 
     #[test]
     fn test_get_tt_dir() {

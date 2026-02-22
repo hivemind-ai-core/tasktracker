@@ -149,12 +149,9 @@ impl McpServer {
         match self.handlers.get(tool_name) {
             Some(handler) => match handler.handle(db, arguments) {
                 Ok(mcp_response) => {
-                    // Convert McpResponse to MCP protocol format with content field
                     let protocol_response = mcp_response_to_protocol(mcp_response);
-                    self.transport.send_response(&JsonRpcResponse::success(
-                        id,
-                        protocol_response,
-                    ))
+                    self.transport
+                        .send_response(&JsonRpcResponse::success(id, protocol_response))
                 }
                 Err(msg) => self
                     .transport
@@ -183,7 +180,10 @@ fn mcp_response_to_protocol(response: McpResponse) -> serde_json::Value {
                 }]
             })
         }
-        McpResponse::Error { error_code, message } => {
+        McpResponse::Error {
+            error_code,
+            message,
+        } => {
             serde_json::json!({
                 "content": [{
                     "type": "text",

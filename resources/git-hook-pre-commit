@@ -1,0 +1,11 @@
+#!/bin/bash
+# tt git pre-commit hook
+# Copy to .git/hooks/pre-commit and make executable
+# Shows current task status before commit
+
+echo "📋 tt status:"
+tt current 2>/dev/null || echo "  No active task"
+
+echo ""
+echo "Pending tasks:"
+tt list --status pending 2>/dev/null | head -10

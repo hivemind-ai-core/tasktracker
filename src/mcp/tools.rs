@@ -4,7 +4,7 @@
 
 use crate::core::{
     add_dependencies, add_dependency, advance_task, archive_completed, block_task, block_tasks,
-    clear_target, create_task, edit_task, get_current_task, get_next_task, get_status, get_target,
+    clear_target, create_task, edit_task, get_current_task, get_status, get_target,
     get_task_artifacts, get_task_detail_allow_archived, get_tasks_allow_archived, list_tasks,
     log_artifact, remove_dependencies, remove_dependency, reorder_task, set_target, split_task,
     unblock_task, unblock_tasks,
@@ -67,19 +67,37 @@ struct ListTasksInput {
     limit: Option<usize>,
     #[serde(default)]
     offset: Option<usize>,
+    #[serde(default)]
+    ids: Option<Vec<i64>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct CreateTaskInput {
-    title: String,
-    description: String,
-    dod: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    dod: Option<String>,
     #[serde(default)]
     after_id: Option<i64>,
     #[serde(default)]
     before_id: Option<i64>,
     #[serde(default)]
     depends_on: Vec<i64>,
+    /// Split an existing task into subtasks
+    #[serde(default)]
+    split: Option<i64>,
+    /// Subtasks for split (used with split parameter)
+    #[serde(default)]
+    tasks: Option<Vec<SubtaskDefinition>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct SubtaskDefinition {
+    title: String,
+    description: String,
+    dod: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -97,6 +115,18 @@ struct EditTaskInput {
     /// Action to perform (complete, stop, cancel, block, unblock)
     #[serde(default)]
     action: Option<String>,
+    /// Add dependencies (task will depend on these IDs)
+    #[serde(default)]
+    depends_on: Option<Vec<i64>>,
+    /// Remove dependencies
+    #[serde(default)]
+    remove_depends_on: Option<Vec<i64>>,
+    /// Move task after this ID
+    #[serde(default)]
+    after: Option<i64>,
+    /// Move task before this ID
+    #[serde(default)]
+    before: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -155,13 +185,6 @@ struct AdvanceInput {
 struct ArchiveInput {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
-struct SubtaskDefinition {
-    title: String,
-    description: String,
-    dod: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 struct SplitTaskInput {
     id: i64,
     subtasks: Vec<SubtaskDefinition>,
@@ -204,30 +227,6 @@ impl From<crate::core::Task> for TaskSummary {
 // ============================================================================
 // Tool Handlers
 // ============================================================================
-
-/// Get next task handler
-pub struct GetNextTaskHandler;
-
-impl ToolHandler for GetNextTaskHandler {
-    fn handle(&self, db: &Connection, _params: serde_json::Value) -> Result<McpResponse, String> {
-        match get_next_task(db) {
-            Ok(Some(task)) => Ok(McpResponse::ok(task)),
-            Ok(None) => Ok(McpResponse::ok(
-                serde_json::json!({"message": "No next task available"}),
-            )),
-            Err(e) => Ok(McpResponse::from_tt_error(e)),
-        }
-    }
-
-    fn metadata(&self) -> ToolMetadata {
-        let schema = schemars::schema_for!(EmptyInput);
-        ToolMetadata::new(
-            "get_next_task",
-            "Returns the next task to work on toward the current target. Call this after completing a task. If the response is TargetReached, stop working and report to the user.",
-            serde_json::to_value(schema).unwrap(),
-        )
-    }
-}
 
 /// Get current task handler
 pub struct GetCurrentTaskHandler;
@@ -281,14 +280,14 @@ impl ToolHandler for GetTargetHandler {
     }
 }
 
-/// Clear target handler
-pub struct ClearTargetHandler;
+/// Clear focus handler
+pub struct ClearFocusHandler;
 
-impl ToolHandler for ClearTargetHandler {
+impl ToolHandler for ClearFocusHandler {
     fn handle(&self, db: &Connection, _params: serde_json::Value) -> Result<McpResponse, String> {
         match clear_target(db) {
             Ok(()) => Ok(McpResponse::ok(serde_json::json!({
-                "message": "Target cleared"
+                "message": "Focus cleared"
             }))),
             Err(e) => Ok(McpResponse::from_tt_error(e)),
         }
@@ -297,8 +296,8 @@ impl ToolHandler for ClearTargetHandler {
     fn metadata(&self) -> ToolMetadata {
         let schema = schemars::schema_for!(EmptyInput);
         ToolMetadata::new(
-            "clear_target",
-            "Clear the current target. After clearing, list_tasks and get_next_task will operate on all tasks.",
+            "clear_focus",
+            "Clear the current focus. After clearing, list_tasks will operate on all tasks.",
             serde_json::to_value(schema).unwrap(),
         )
     }
@@ -354,7 +353,7 @@ impl ToolHandler for GetTaskHandler {
         let schema = schemars::schema_for!(GetTaskInput);
         ToolMetadata::new(
             "get_task",
-            "Get full details of a specific task including its dependencies, dependents, and artifacts. Can view archived tasks.",
+            "Get full details of a task. Use id=N to get a specific task, or current=true to get the active task.",
             serde_json::to_value(schema).unwrap(),
         )
     }
@@ -418,6 +417,12 @@ impl ToolHandler for ListTasksHandler {
             input.archived,
         ) {
             Ok(tasks) => {
+                // Filter by ids if provided
+                let tasks = if let Some(ids) = input.ids {
+                    tasks.into_iter().filter(|t| ids.contains(&t.id)).collect()
+                } else {
+                    tasks
+                };
                 let summaries: Vec<TaskSummary> =
                     tasks.into_iter().map(TaskSummary::from).collect();
                 Ok(McpResponse::ok(summaries))
@@ -444,23 +449,43 @@ impl ToolHandler for CreateTaskHandler {
         let input: CreateTaskInput =
             serde_json::from_value(params).map_err(|e| format!("Invalid parameters: {e}"))?;
 
-        let deps_opt = if input.depends_on.is_empty() {
-            None
-        } else {
-            Some(input.depends_on)
-        };
+        // Handle split functionality
+        if let Some(task_id) = input.split {
+            let subtasks = input.tasks.ok_or("tasks required when splitting")?;
 
-        match create_task(
-            db,
-            &input.title,
-            &input.description,
-            &input.dod,
-            input.after_id,
-            input.before_id,
-            deps_opt,
-        ) {
-            Ok(task) => Ok(McpResponse::ok(task)),
-            Err(e) => Ok(McpResponse::from_tt_error(e)),
+            let subtask_defs: Vec<(String, String, String)> = subtasks
+                .into_iter()
+                .map(|s| (s.title, s.description, s.dod))
+                .collect();
+
+            match crate::core::split_task(db, task_id, subtask_defs) {
+                Ok(tasks) => Ok(McpResponse::ok(tasks)),
+                Err(e) => Ok(McpResponse::from_tt_error(e)),
+            }
+        } else {
+            // Regular task creation
+            let title = input.title.ok_or("title required")?;
+            let description = input.description.ok_or("description required")?;
+            let dod = input.dod.ok_or("dod required")?;
+
+            let deps_opt = if input.depends_on.is_empty() {
+                None
+            } else {
+                Some(input.depends_on)
+            };
+
+            match create_task(
+                db,
+                &title,
+                &description,
+                &dod,
+                input.after_id,
+                input.before_id,
+                deps_opt,
+            ) {
+                Ok(task) => Ok(McpResponse::ok(task)),
+                Err(e) => Ok(McpResponse::from_tt_error(e)),
+            }
         }
     }
 
@@ -468,7 +493,7 @@ impl ToolHandler for CreateTaskHandler {
         let schema = schemars::schema_for!(CreateTaskInput);
         ToolMetadata::new(
             "create_task",
-            "Creates a new task. If you discover during implementation that a task needs to be broken into smaller pieces, create subtasks and add dependencies. You can specify after_id or before_id to position the task in the list, and depends_on to set dependencies immediately.",
+            "Creates a new task or splits an existing task into subtasks. Use title/description/dod to create a new task. Use split=task_id and tasks=[{title,description,dod},...] to split a task.",
             serde_json::to_value(schema).unwrap(),
         )
     }
@@ -481,6 +506,34 @@ impl ToolHandler for EditTaskHandler {
     fn handle(&self, db: &Connection, params: serde_json::Value) -> Result<McpResponse, String> {
         let input: EditTaskInput =
             serde_json::from_value(params).map_err(|e| format!("Invalid parameters: {e}"))?;
+
+        // Handle dependencies
+        if let Some(deps) = input.depends_on {
+            if !deps.is_empty() {
+                if let Err(e) = add_dependencies(db, input.id, deps) {
+                    return Ok(McpResponse::from_tt_error(e));
+                }
+            }
+        }
+
+        if let Some(deps) = input.remove_depends_on {
+            if !deps.is_empty() {
+                for dep in deps {
+                    let _ = remove_dependency(db, input.id, dep);
+                }
+            }
+        }
+
+        // Handle reordering
+        if let Some(after_id) = input.after {
+            if let Err(e) = reorder_task(db, input.id, Some(after_id), None) {
+                return Ok(McpResponse::from_tt_error(e));
+            }
+        } else if let Some(before_id) = input.before {
+            if let Err(e) = reorder_task(db, input.id, None, Some(before_id)) {
+                return Ok(McpResponse::from_tt_error(e));
+            }
+        }
 
         // Parse status if provided
         let status_opt = match input.status {
@@ -532,16 +585,16 @@ impl ToolHandler for EditTaskHandler {
         let schema = schemars::schema_for!(EditTaskInput);
         ToolMetadata::new(
             "edit_task",
-            "Edit an existing task's title, description, definition of done, or status. Use status to change task state or action to perform an operation: complete, stop, cancel, block, unblock.",
+            "Edit a task: change title/description/dod, set status, perform actions (complete/stop/cancel/block/unblock), add/remove dependencies (depends_on, remove_depends_on), or reorder (after, before).",
             serde_json::to_value(schema).unwrap(),
         )
     }
 }
 
-/// Set target handler
-pub struct SetTargetHandler;
+/// Set focus handler
+pub struct SetFocusHandler;
 
-impl ToolHandler for SetTargetHandler {
+impl ToolHandler for SetFocusHandler {
     fn handle(&self, db: &Connection, params: serde_json::Value) -> Result<McpResponse, String> {
         let input: TaskIdInput =
             serde_json::from_value(params).map_err(|e| format!("Invalid parameters: {e}"))?;
@@ -558,8 +611,8 @@ impl ToolHandler for SetTargetHandler {
     fn metadata(&self) -> ToolMetadata {
         let schema = schemars::schema_for!(TaskIdInput);
         ToolMetadata::new(
-            "set_target",
-            "Set the focus task you're working toward. This affects which tasks are shown in `list_tasks` and `get_next_task`.",
+            "set_focus",
+            "Set the focus task you're working toward. This affects which tasks are shown in `list_tasks`.",
             serde_json::to_value(schema).unwrap(),
         )
     }
@@ -617,8 +670,8 @@ impl ToolHandler for FocusHandler {
     fn metadata(&self) -> ToolMetadata {
         let schema = schemars::schema_for!(FocusInput);
         ToolMetadata::new(
-            "tt_focus",
-            "Manage focus (target) task: set id to focus on a task, get to see current focus, clear to remove focus.",
+            "focus",
+            "Manage focus task: set id to focus on a task, get to see current focus, clear to remove focus.",
             serde_json::to_value(schema).unwrap(),
         )
     }
@@ -943,7 +996,7 @@ impl ToolHandler for ArtifactsHandler {
     fn metadata(&self) -> ToolMetadata {
         let schema = schemars::schema_for!(ArtifactsInput);
         ToolMetadata::new(
-            "tt_artifacts",
+            "artifacts",
             "Manage task artifacts: log to record a file as artifact, list to get artifacts for a task.",
             serde_json::to_value(schema).unwrap(),
         )
@@ -1024,42 +1077,20 @@ pub fn register_all_tools() -> HandlerRegistry {
     let mut registry = HandlerRegistry::new();
 
     // Query tools
-    registry.insert("get_next_task".to_string(), Box::new(GetNextTaskHandler));
-    registry.insert(
-        "get_current_task".to_string(),
-        Box::new(GetCurrentTaskHandler),
-    );
-    registry.insert("get_status".to_string(), Box::new(GetStatusHandler));
     registry.insert("get_task".to_string(), Box::new(GetTaskHandler));
-    registry.insert("get_tasks".to_string(), Box::new(GetTasksHandler));
     registry.insert("list_tasks".to_string(), Box::new(ListTasksHandler));
 
     // Task management tools
     registry.insert("create_task".to_string(), Box::new(CreateTaskHandler));
     registry.insert("edit_task".to_string(), Box::new(EditTaskHandler));
-    registry.insert("set_target".to_string(), Box::new(SetTargetHandler));
-    registry.insert("clear_target".to_string(), Box::new(ClearTargetHandler));
-    registry.insert("tt_focus".to_string(), Box::new(FocusHandler));
-    registry.insert("split_task".to_string(), Box::new(SplitTaskHandler));
+    registry.insert("focus".to_string(), Box::new(FocusHandler));
     registry.insert("archive_tasks".to_string(), Box::new(ArchiveTasksHandler));
 
     // Workflow tools
     registry.insert("advance_task".to_string(), Box::new(AdvanceTaskHandler));
-    // block/unblock now handled via edit_task action parameter
-
-    // Dependency tools
-    registry.insert(
-        "manage_dependency".to_string(),
-        Box::new(ManageDependencyHandler),
-    );
 
     // Artifact tools
-    registry.insert("log_artifact".to_string(), Box::new(LogArtifactHandler));
-    registry.insert("get_artifacts".to_string(), Box::new(GetArtifactsHandler));
-    registry.insert("tt_artifacts".to_string(), Box::new(ArtifactsHandler));
-
-    // Ordering tools
-    registry.insert("reorder_task".to_string(), Box::new(ReorderTaskHandler));
+    registry.insert("artifacts".to_string(), Box::new(ArtifactsHandler));
 
     registry
 }
@@ -1084,13 +1115,11 @@ mod tests {
     #[test]
     fn test_register_all_tools() {
         let registry = register_all_tools();
-        assert_eq!(registry.len(), 19); // 19 tools (removed block/unblock, added tt_focus, tt_artifacts)
+        assert_eq!(registry.len(), 8); // 8 tools
 
         // Check some key tools exist
-        assert!(registry.contains_key("get_next_task"));
+        assert!(registry.contains_key("get_task"));
         assert!(registry.contains_key("create_task"));
-        assert!(registry.contains_key("edit_task")); // Now handles status changes
-        assert!(registry.contains_key("tt_focus")); // New consolidated focus tool
     }
 
     #[test]
@@ -1098,7 +1127,7 @@ mod tests {
         let registry = register_all_tools();
         let metadata = get_all_tool_metadata(&registry);
 
-        assert_eq!(metadata.len(), 19); // 19 tools (removed block/unblock, added tt_focus, tt_artifacts)
+        assert_eq!(metadata.len(), 8); // 8 tools
 
         // Check metadata structure
         for meta in metadata {
@@ -1196,9 +1225,9 @@ mod tests {
             _ => panic!("Expected Ok"),
         };
 
-        // Set target
-        let set_target = SetTargetHandler;
-        set_target
+        // Set focus
+        let set_focus = SetFocusHandler;
+        set_focus
             .handle(&conn, serde_json::json!({"id": task_id}))
             .unwrap();
 
@@ -1400,8 +1429,8 @@ mod tests {
             _ => panic!("Expected Ok"),
         };
 
-        let set_target = SetTargetHandler;
-        set_target
+        let set_focus = SetFocusHandler;
+        set_focus
             .handle(&conn, serde_json::json!({"id": id}))
             .unwrap();
 
@@ -1442,23 +1471,6 @@ mod tests {
                 assert_eq!(error_code, "NoActiveTask");
             }
             _ => panic!("Expected NoActiveTask error"),
-        }
-    }
-
-    #[test]
-    fn test_no_target() {
-        let conn = setup();
-
-        // Without a target, get_next_task should return Ok(None) since there are no tasks
-        let get_next = GetNextTaskHandler;
-        let result = get_next.handle(&conn, serde_json::Value::Null).unwrap();
-
-        match result {
-            McpResponse::Ok { data } => {
-                // Should return a message indicating no next task available
-                assert!(data.get("message").is_some());
-            }
-            _ => panic!("Expected Ok response, not error"),
         }
     }
 
@@ -1633,7 +1645,6 @@ mod persistence_tests {
     #[test]
     fn test_split_task_persistence() {
         // TDD: Test that split_task creates subtasks that persist across connections
-        use crate::db::connection::open_memory_db;
 
         let test_dir = "/tmp/tt_split_persist_test";
         let db_path = std::path::PathBuf::from(format!("{}/tt.db", test_dir));

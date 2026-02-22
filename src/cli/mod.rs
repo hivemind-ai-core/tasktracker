@@ -67,11 +67,23 @@ pub enum Commands {
         /// Action to perform on task (complete, stop, cancel, block, unblock)
         #[arg(long)]
         action: Option<String>,
+        /// Add dependencies (task will depend on these IDs)
+        #[arg(long, value_delimiter = ',')]
+        depends_on: Option<Vec<i64>>,
+        /// Remove dependencies
+        #[arg(long, value_delimiter = ',')]
+        remove_depends_on: Option<Vec<i64>>,
+        /// Move task after this ID
+        #[arg(long)]
+        after: Option<i64>,
+        /// Move task before this ID
+        #[arg(long)]
+        before: Option<i64>,
     },
-    /// Show task details (one or more)
+    /// Show task details (single task only)
     Show {
-        /// Task ID(s)
-        ids: Vec<i64>,
+        /// Task ID
+        id: i64,
     },
     /// List tasks with optional filtering
     #[command(alias = "ls")]
@@ -85,6 +97,9 @@ pub enum Commands {
         /// Filter by status (pending, in_progress, completed, blocked)
         #[arg(long)]
         status: Option<String>,
+        /// Filter by specific task IDs
+        #[arg(long, value_delimiter = ',')]
+        ids: Option<Vec<i64>>,
         /// Limit number of results
         #[arg(long)]
         limit: Option<usize>,
@@ -135,10 +150,10 @@ pub enum Commands {
     Reorder {
         /// Task ID
         id: i64,
-        /// Insert after this task
+        /// Move after this task ID
         #[arg(long)]
         after: Option<i64>,
-        /// Insert before this task
+        /// Move before this task ID
         #[arg(long)]
         before: Option<i64>,
     },
@@ -235,6 +250,10 @@ pub fn dispatch(cmd: Commands) -> Result<()> {
             dod,
             status,
             action,
+            depends_on,
+            remove_depends_on,
+            after,
+            before,
         } => {
             let conn = ensure_db()?;
             edit::run(
@@ -245,21 +264,26 @@ pub fn dispatch(cmd: Commands) -> Result<()> {
                 dod.as_deref(),
                 status,
                 action,
+                depends_on,
+                remove_depends_on,
+                after,
+                before,
             )
         }
-        Commands::Show { ids } => {
+        Commands::Show { id } => {
             let conn = ensure_db()?;
-            show::run(&conn, ids)
+            show::run(&conn, id)
         }
         Commands::List {
             all,
             archived,
             status,
+            ids,
             limit,
             offset,
         } => {
             let conn = ensure_db()?;
-            list::run(&conn, all, archived, status, limit, offset)
+            list::run(&conn, all, archived, status, ids, limit, offset)
         }
         Commands::Focus { action } => {
             let conn = ensure_db()?;

@@ -1,0 +1,7 @@
+{
+  "recommendations": [
+    // No specific tt extension yet, but these help with task tracking
+    // Add tt-specific extension when available
+  ],
+  "taskProblemMatchers": []
+}

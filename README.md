@@ -196,3 +196,62 @@ Once all tasks in the subgraph are complete, `tt next` reports "Target Reached."
 | `✓` | completed |
 | `✗` | blocked |
 | `✕` | cancelled |
+
+---
+
+## Agent Instructions (Copy to Your Agent Rules)
+
+Add this to your agent's rules file for reliable task management:
+
+```
+## Task Tracking (tt)
+
+MUST USE tt. NEVER WORK ON TASKS WITHOUT tt.
+
+### Every Session
+1. Get task: `get_current_task` → none? `list_tasks(status="pending", limit=1)`
+2. Work - create internal todo
+3. Done? `tt_advance_task` → returns next
+
+### Blocked?
+- `tt_edit_task(id=X, action="block")` when waiting
+- `tt_edit_task(id=X, action="unblock")` when ready
+
+### Essential Tools (tt namespace)
+| Tool | Use |
+|------|-----|
+| `get_current_task` | Active task |
+| `tt_advance_task` | Complete + start next |
+| `tt_edit_task(action="block")` | Block |
+| `tt_edit_task(action="unblock")` | Unblock |
+| `tt_list_tasks(status="pending", limit=1)` | Next pending task |
+| `tt_focus(action="set", id=X)` | Set focus |
+
+### CLI: tt current; tt advance
+```
+
+Copy the Agent Instructions section into your agent's rules file.
+
+## Resources
+
+### Agent Integration
+
+| File | Purpose |
+|------|---------|
+| `resources/tt.md` | Workflow for Kilo/Claude Code - use as `/tt` command |
+| `resources/tt-skill.md` | Skill file for tt - describes commands and workflow |
+| `resources/agent-rules-example.md` | Example agent rules - copy to your agent |
+
+### Shell Integration
+
+| File | Usage |
+|------|-------|
+| `resources/tt.bash-completion` | Bash completion - source in `.bashrc` or copy to `/etc/bash_completion.d/` |
+| `resources/git-hook-pre-commit` | Git hook - copy to `.git/hooks/pre-commit` and `chmod +x` |
+
+### Project Setup
+
+| File | Usage |
+|------|-------|
+| `resources/.gitignore-tt` | Add to project's `.gitignore` to exclude `tt.db` |
+| `resources/.vscode/extensions.json` | VS Code recommendations (placeholder) |

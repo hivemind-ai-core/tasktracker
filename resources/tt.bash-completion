@@ -1,0 +1,52 @@
+# Bash completion for tt
+# Source this file or copy to /etc/bash_completion.d/
+
+_tt() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    opts="init add edit show list focus advance current depend log artifacts reorder reindex split archive mcp install dump restore help"
+
+    case "${prev}" in
+        tt)
+            COMPREPLY=($(compgen -W "${opts}" -- ${cur}))
+            return 0
+            ;;
+        edit|show|depend|reorder|split)
+            # Get task IDs
+            local tasks=$(tt list --all 2>/dev/null | grep -oP '\[#\s*\K[0-9]+' | tr '\n' ' ')
+            COMPREPLY=($(compgen -W "${tasks}" -- ${cur}))
+            return 0
+            ;;
+        focus)
+            COMPREPLY=($(compgen -W "show set clear next last" -- ${cur}))
+            return 0
+            ;;
+        archive)
+            COMPREPLY=($(compgen -W "all" -- ${cur}))
+            return 0
+            ;;
+        --status)
+            COMPREPLY=($(compgen -W "pending in_progress completed blocked cancelled" -- ${cur}))
+            return 0
+            ;;
+        --action)
+            COMPREPLY=($(compgen -W "complete stop cancel block unblock" -- ${cur}))
+            return 0
+            ;;
+        --tool)
+            COMPREPLY=($(compgen -W "claude kilo kimi" -- ${cur}))
+            return 0
+            ;;
+    esac
+
+    if [[ ${cur} == -* ]]; then
+        COMPREPLY=($(compgen -W "--all --archived --status --limit --offset --after --before --depends-on --title --desc --dod --action --dry-run --file --task --global --local --tool" -- ${cur}))
+    else
+        COMPREPLY=($(compgen -W "${opts}" -- ${cur}))
+    fi
+}
+
+complete -F _t_t tt

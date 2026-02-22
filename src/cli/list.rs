@@ -21,6 +21,7 @@ pub fn run(
     all: bool,
     archived: bool,
     status: Option<String>,
+    ids: Option<Vec<i64>>,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<()> {
@@ -33,12 +34,17 @@ pub fn run(
     // Determine archived filter
     let archived_filter = if archived { Some(true) } else { None };
 
-    let tasks = list_tasks(conn, all, status_filter, limit, offset, archived_filter)?;
+    let mut tasks = list_tasks(conn, all, status_filter, limit, offset, archived_filter)?;
+
+    // Filter by ids if provided
+    if let Some(ref filter_ids) = ids {
+        tasks.retain(|t| filter_ids.contains(&t.id));
+    }
 
     // Show header
     if archived {
         println!("Archived tasks:");
-    } else if !all && status_filter.is_none() {
+    } else if !all && status_filter.is_none() && ids.is_none() {
         // Show focus header if set
         match get_target(conn)? {
             Some(target) => {
@@ -50,6 +56,8 @@ pub fn run(
         }
     } else if let Some(s) = status_filter {
         println!("Tasks with status: {}", s);
+    } else if ids.is_some() {
+        println!("Filtered by IDs");
     }
 
     for task in &tasks {
