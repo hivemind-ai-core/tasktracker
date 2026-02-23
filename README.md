@@ -212,22 +212,22 @@ MUST USE tt. NEVER WORK ON TASKS WITHOUT tt.
 ### Every Session
 1. Get task: `get_current_task` → none? `list_tasks(status="pending", limit=1)`
 2. Work - create internal todo
-3. Done? `tt_advance_task` → returns next
+3. Done? `advance_task` → returns next
 
 ### Blocked?
-- `tt_edit_task(id=X, action="block")` when waiting
-- `tt_edit_task(id=X, action="unblock")` when ready
+- `edit_task(id=X, action="block")` when waiting
+- `edit_task(id=X, action="unblock")` when ready
 
 ### Essential Tools (tt namespace)
 | Tool | Use |
 |------|-----|
 | `get_current_task` | Active task |
-| `tt_advance_task` | Complete + start next |
-| `tt_edit_task(action="block")` | Block |
-| `tt_edit_task(action="unblock")` | Unblock |
-| `tt_list_tasks(status="pending", limit=1)` | Next pending task |
-| `tt_list_tasks(active=true)` | All active tasks (pending or in_progress) |
-| `tt_focus(action="set", id=X)` | Set focus |
+| `advance_task` | Complete + start next |
+| `edit_task(action="block")` | Block |
+| `edit_task(action="unblock")` | Unblock |
+| `list_tasks(status="pending", limit=1)` | Next pending task |
+| `list_tasks(active=true)` | All active tasks (pending or in_progress) |
+| `focus(action="set", id=X)` | Set focus |
 
 ### CLI: tt current; tt advance
 ```
