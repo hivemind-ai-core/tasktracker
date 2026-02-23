@@ -23,8 +23,9 @@ This skill provides commands for working with the tt task tracker. tt manages ta
 - Use when: Waiting on external factor
 
 ### List Tasks
-- Tool: `tt_list_tasks` with status filter
+- Tool: `tt_list_tasks` with status filter or active filter
 - Use: `tt_list_tasks(status="pending")` for pending tasks
+- Use: `tt_list_tasks(active=true)` for all active tasks (pending or in_progress)
 
 ## Required Workflow - ALWAYS FOLLOW THIS:
 

@@ -64,6 +64,8 @@ struct ListTasksInput {
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
+    active: bool,
+    #[serde(default)]
     limit: Option<usize>,
     #[serde(default)]
     offset: Option<usize>,
@@ -391,6 +393,14 @@ impl ToolHandler for ListTasksHandler {
         let input: ListTasksInput =
             serde_json::from_value(params).map_err(|e| format!("Invalid parameters: {e}"))?;
 
+        // Validate mutual exclusivity of status and active
+        if input.status.is_some() && input.active {
+            return Ok(McpResponse::error(
+                "InvalidArgument",
+                "Cannot use both status and active parameters together. Use active=true to show pending and in_progress tasks.",
+            ));
+        }
+
         // Parse status filter if provided
         let status_filter = match input.status {
             Some(s) => match s.to_lowercase().as_str() {
@@ -412,6 +422,7 @@ impl ToolHandler for ListTasksHandler {
             db,
             input.all,
             status_filter,
+            input.active,
             input.limit,
             input.offset,
             input.archived,
@@ -435,7 +446,7 @@ impl ToolHandler for ListTasksHandler {
         let schema = schemars::schema_for!(ListTasksInput);
         ToolMetadata::new(
             "list_tasks",
-            "List all tasks in sorted order. By default, shows only tasks in the target subgraph. Use all=true to see all tasks. Use archived=true to see only archived tasks. Can filter by status and paginate with limit/offset.",
+            "List all tasks in sorted order. By default, shows only tasks in the target subgraph. Use all=true to see all tasks. Use archived=true to see only archived tasks. Use active=true to filter to pending and in_progress tasks. Can filter by status and paginate with limit/offset.",
             serde_json::to_value(schema).unwrap(),
         )
     }

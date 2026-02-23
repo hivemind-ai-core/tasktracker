@@ -26,6 +26,7 @@ You MUST use the tt task tracker for all work.
 | `tt_edit_task(action="block")` | Block |
 | `tt_edit_task(action="unblock")` | Unblock |
 | `tt_list_tasks(status="pending", limit=1)` | Next pending task |
+| `tt_list_tasks(active=true)` | All active tasks (pending or in_progress) |
 
 ### Key Rules:
 - ALWAYS get task from tt first

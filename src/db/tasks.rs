@@ -92,6 +92,31 @@ pub fn get_tasks_by_status(
     Ok(tasks)
 }
 
+/// Get active tasks (pending or in_progress) with optional limit and offset (excludes soft-deleted tasks)
+pub fn get_active_tasks(
+    conn: &Connection,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<Task>> {
+    let sql = format!(
+        "SELECT id, title, description, dod, status, manual_order, 
+                created_at, started_at, completed_at, last_touched_at, deleted 
+         FROM tasks WHERE status IN ('pending', 'in_progress') AND deleted = 0 ORDER BY manual_order{}{}",
+        limit.map(|l| format!(" LIMIT {}", l)).unwrap_or_default(),
+        offset.map(|o| format!(" OFFSET {}", o)).unwrap_or_default()
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], row_to_task)?;
+
+    let mut tasks = Vec::new();
+    for task in rows {
+        tasks.push(task?);
+    }
+
+    Ok(tasks)
+}
+
 /// Get all tasks with optional limit and offset (excludes soft-deleted tasks)
 pub fn get_all_tasks_paginated(
     conn: &Connection,

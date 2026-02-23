@@ -520,6 +520,7 @@ fn is_in_target_subgraph(
 /// List tasks with optional filtering and pagination
 /// If all=true, returns all tasks regardless of target
 /// If status is specified, filters by that status
+/// If active=true, filters to pending and in_progress tasks
 /// If archived is Some(true), returns only archived tasks
 /// If archived is Some(false) or None, returns non-archived tasks (default)
 /// limit and offset control pagination
@@ -527,6 +528,7 @@ pub fn list_tasks(
     conn: &Connection,
     all: bool,
     status: Option<TaskStatus>,
+    active: bool,
     limit: Option<usize>,
     offset: Option<usize>,
     archived: Option<bool>,
@@ -534,6 +536,11 @@ pub fn list_tasks(
     // Handle archived filter first
     if archived == Some(true) {
         return db::tasks::get_archived_tasks(conn, limit, offset);
+    }
+
+    // If active filter is specified, return pending and in_progress tasks
+    if active {
+        return db::tasks::get_active_tasks(conn, limit, offset);
     }
 
     // If status filter is specified, use it directly
@@ -1030,7 +1037,7 @@ mod tests {
         add_dependency(&conn, task_a.id, task_c.id).unwrap();
 
         // List tasks - B and C should come before A
-        let tasks = list_tasks(&conn, false, None, None, None, None).unwrap();
+        let tasks = list_tasks(&conn, false, None, false, None, None, None).unwrap();
 
         assert_eq!(tasks.len(), 3);
         // B and C should appear before A (dependencies first)
@@ -1207,12 +1214,12 @@ mod tests {
         archive_completed(&conn).unwrap();
 
         // Default list should exclude archived
-        let tasks = list_tasks(&conn, true, None, None, None, None).unwrap();
+        let tasks = list_tasks(&conn, true, None, false, None, None, None).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, task1.id);
 
         // List with archived=true should only show archived
-        let archived = list_tasks(&conn, true, None, None, None, Some(true)).unwrap();
+        let archived = list_tasks(&conn, true, None, false, None, None, Some(true)).unwrap();
         assert_eq!(archived.len(), 1);
         assert_eq!(archived[0].id, task2.id);
     }

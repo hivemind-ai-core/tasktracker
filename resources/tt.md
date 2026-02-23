@@ -34,6 +34,7 @@ Work through `tt` tasks until none remain. FOLLOW THESE STEPS EXACTLY:
 | `tt_edit_task(action="block")` | Block |
 | `tt_edit_task(action="unblock")` | Unblock |
 | `tt_list_tasks(status="pending", limit=1)` | Next pending task |
+| `tt_list_tasks(active=true)` | All active tasks (pending or in_progress) |
 | `tt_focus(action="set", id=X)` | Set focus |
 
 ## Rules

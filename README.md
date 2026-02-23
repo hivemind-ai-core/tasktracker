@@ -109,6 +109,7 @@ Add to your MCP config file:
 | `tt list` | List tasks in dependency order |
 | `tt list --all` | List all tasks (not just focused) |
 | `tt list --status pending` | Filter by status |
+| `tt list --active` | Filter to active tasks (pending or in_progress) |
 
 ### Workflow
 
@@ -225,6 +226,7 @@ MUST USE tt. NEVER WORK ON TASKS WITHOUT tt.
 | `tt_edit_task(action="block")` | Block |
 | `tt_edit_task(action="unblock")` | Unblock |
 | `tt_list_tasks(status="pending", limit=1)` | Next pending task |
+| `tt_list_tasks(active=true)` | All active tasks (pending or in_progress) |
 | `tt_focus(action="set", id=X)` | Set focus |
 
 ### CLI: tt current; tt advance

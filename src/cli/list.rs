@@ -21,10 +21,18 @@ pub fn run(
     all: bool,
     archived: bool,
     status: Option<String>,
+    active: bool,
     ids: Option<Vec<i64>>,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<()> {
+    // Validate mutual exclusivity of --status and --active
+    if status.is_some() && active {
+        return Err(Error::InvalidArgument(
+            "Cannot use both --status and --active flags together. Use --active to show pending and in_progress tasks.".to_string()
+        ));
+    }
+
     // Parse status filter if provided
     let status_filter = match status {
         Some(s) => Some(parse_status(&s)?),
@@ -34,7 +42,15 @@ pub fn run(
     // Determine archived filter
     let archived_filter = if archived { Some(true) } else { None };
 
-    let mut tasks = list_tasks(conn, all, status_filter, limit, offset, archived_filter)?;
+    let mut tasks = list_tasks(
+        conn,
+        all,
+        status_filter,
+        active,
+        limit,
+        offset,
+        archived_filter,
+    )?;
 
     // Filter by ids if provided
     if let Some(ref filter_ids) = ids {
@@ -44,7 +60,7 @@ pub fn run(
     // Show header
     if archived {
         println!("Archived tasks:");
-    } else if !all && status_filter.is_none() && ids.is_none() {
+    } else if !all && status_filter.is_none() && !active && ids.is_none() {
         // Show focus header if set
         match get_target(conn)? {
             Some(target) => {
@@ -56,6 +72,8 @@ pub fn run(
         }
     } else if let Some(s) = status_filter {
         println!("Tasks with status: {}", s);
+    } else if active {
+        println!("Active tasks (pending or in_progress):");
     } else if ids.is_some() {
         println!("Filtered by IDs");
     }

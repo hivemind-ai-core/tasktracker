@@ -97,6 +97,9 @@ pub enum Commands {
         /// Filter by status (pending, in_progress, completed, blocked)
         #[arg(long)]
         status: Option<String>,
+        /// Filter by active tasks (pending or in_progress)
+        #[arg(long)]
+        active: bool,
         /// Filter by specific task IDs
         #[arg(long, value_delimiter = ',')]
         ids: Option<Vec<i64>>,
@@ -278,12 +281,13 @@ pub fn dispatch(cmd: Commands) -> Result<()> {
             all,
             archived,
             status,
+            active,
             ids,
             limit,
             offset,
         } => {
             let conn = ensure_db()?;
-            list::run(&conn, all, archived, status, ids, limit, offset)
+            list::run(&conn, all, archived, status, active, ids, limit, offset)
         }
         Commands::Focus { action } => {
             let conn = ensure_db()?;

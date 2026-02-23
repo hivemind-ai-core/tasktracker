@@ -336,7 +336,7 @@ All other commands fail with a clear error if `tt.db` is not found in the curren
 | `tt add "<title>" "<description>" "<dod>"` | Creates a task with all required fields. Optional flags: `--depends-on <ids...>`, `--after <id>`, `--before <id>`. Prints the new task ID. Empty strings allowed for optional fields. |
 | `tt edit <id>` | Updates fields. Flags: `--title`, `--desc`, `--dod`. Only provided fields are changed. |
 | `tt show <id> [<ids>...]` | Prints full task detail for one or more tasks (see Section 13). |
-| `tt list` | Prints target subgraph in topological order. `--all` flag shows every task. `--status` filters by status. `--limit` and `--offset` for pagination. |
+| `tt list` | Prints target subgraph in topological order. `--all` flag shows every task. `--status` filters by status. `--active` filters to pending and in_progress tasks (mutually exclusive with --status). `--limit` and `--offset` for pagination. |
 | `tt split <id> <title1> <desc1> <dod1> [, <title2> <desc2> <dod2>, ...]` | Splits a task into multiple subtasks. Original task is deleted. Dependents of original now depend on ALL new tasks. |
 | `tt delete <id>` | Soft delete (archive) a task. `--hard` for permanent delete. |
 | `tt restart <id>` | Moves a completed task back to pending, clearing timestamps. |
@@ -496,7 +496,7 @@ The MCP interface is streamlined to 8 core tools:
 | `tt_focus` | `{ action: "set" \| "get" \| "clear", id?: int }` | Focus task or current focus |
 | `tt_advance_task` | `{ dry_run?: bool }` | Completed task + started next task |
 | `tt_get_task` | `{ id: int }` | Full task detail object |
-| `tt_list_tasks` | `{ all?: bool, status?: str, limit?: int, offset?: int, ids?: int[] }` | Array of task objects |
+| `tt_list_tasks` | `{ all?: bool, status?: str, active?: bool, limit?: int, offset?: int, ids?: int[] }` | Array of task objects |
 | `tt_edit_task` | `{ id: int, title?: str, description?: str, dod?: str, status?: str, action?: "complete" \| "stop" \| "cancel" \| "block" \| "unblock", depends_on?: int[], remove_depends_on?: int[], after?: int, before?: int }` | Updated task object |
 | `tt_artifacts` | `{ action: "log" \| "list", file_path?: str, name?: str, id?: int }` | Artifact object or array |
 | `tt_archive_tasks` | (none) | Count of archived tasks |
@@ -530,7 +530,7 @@ Tool descriptions are how the AI understands when and why to use each tool. Writ
 - `tt_focus`: *"Sets, gets, or clears the focus task. When a focus is set, list_tasks only shows the focus task and its transitive dependencies."*
 - `tt_edit_task`: *"Edits a task's fields or performs actions like complete, stop, cancel, block, or unblock. Also handles dependency management via depends_on and remove_depends_on."*
 - `tt_artifacts`: *"Logs a file as an artifact of a task, or lists artifacts for a task. Use descriptive names like 'research', 'plan', 'implementation-notes', 'test-report'."*
-- `tt_list_tasks`: *"Returns tasks in topological order. Use status='pending' to get next available tasks. Use all=true to see all tasks regardless of focus."*
+- `tt_list_tasks`: *"Returns tasks in topological order. Use status='pending' to get next available tasks. Use active=true to filter to pending and in_progress tasks. Use all=true to see all tasks regardless of focus."*
 - `tt_get_task`: *"Gets full details of a specific task by ID."*
 - `tt_archive_tasks`: *"Archives all completed tasks, hiding them from normal operations."*
 
