@@ -96,56 +96,51 @@ mod tests {
 #[cfg(test)]
 mod file_tests {
     //! Tests with file databases to verify persistence behavior
-    
+
     use super::*;
     use std::path::PathBuf;
-    
+
     fn setup_file_db() -> (tempfile::TempDir, PathBuf) {
         let temp_dir = tempfile::tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
         (temp_dir, db_path)
     }
-    
+
     #[test]
     fn test_file_db_basic_persistence() {
         let (_temp_dir, db_path) = setup_file_db();
-        
+
         // Create table and insert
         {
             let conn = open_db(&db_path).unwrap();
-            conn.execute(
-                "CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)",
-                [],
-            ).unwrap();
-            conn.execute(
-                "INSERT INTO test (value) VALUES ('initial')",
-                [],
-            ).unwrap();
+            conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)", [])
+                .unwrap();
+            conn.execute("INSERT INTO test (value) VALUES ('initial')", [])
+                .unwrap();
         }
-        
+
         // Update in new connection
         {
             let conn = open_db(&db_path).unwrap();
-            conn.execute("UPDATE test SET value = 'updated' WHERE id = 1", []).unwrap();
+            conn.execute("UPDATE test SET value = 'updated' WHERE id = 1", [])
+                .unwrap();
         }
-        
+
         // Verify with new connection
         {
             let conn = open_db(&db_path).unwrap();
-            let value: String = conn.query_row(
-                "SELECT value FROM test WHERE id = 1",
-                [],
-                |row| row.get(0),
-            ).unwrap();
+            let value: String = conn
+                .query_row("SELECT value FROM test WHERE id = 1", [], |row| row.get(0))
+                .unwrap();
             assert_eq!(value, "updated");
         }
     }
-    
+
     #[test]
     fn test_file_db_trigger_side_effect() {
         //! Test that trigger side effects persist correctly
         let (_temp_dir, db_path) = setup_file_db();
-        
+
         // Create table with trigger (similar to our schema)
         {
             let conn = open_db(&db_path).unwrap();
@@ -163,50 +158,71 @@ mod file_tests {
                     UPDATE tasks SET last_touched_at = strftime('%Y-%m-%dT%H:%M:%S', 'now') WHERE id = NEW.id;
                 END;
             "#).unwrap();
-            
+
             conn.execute(
                 "INSERT INTO tasks (title, status) VALUES ('Test', 'pending')",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
-        
+
         // Get initial timestamp
         let initial_time: String = {
             let conn = open_db(&db_path).unwrap();
-            conn.query_row("SELECT last_touched_at FROM tasks WHERE id = 1", [], |row| row.get(0)).unwrap()
+            conn.query_row(
+                "SELECT last_touched_at FROM tasks WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
         };
-        
+
         // Wait and update
         std::thread::sleep(std::time::Duration::from_secs(1));
-        
+
         {
             let conn = open_db(&db_path).unwrap();
-            conn.execute("UPDATE tasks SET status = 'in_progress' WHERE id = 1", []).unwrap();
-            
+            conn.execute("UPDATE tasks SET status = 'in_progress' WHERE id = 1", [])
+                .unwrap();
+
             // Check within same connection
-            let time_in_conn: String = conn.query_row(
-                "SELECT last_touched_at FROM tasks WHERE id = 1", [], |row| row.get(0)
-            ).unwrap();
+            let time_in_conn: String = conn
+                .query_row(
+                    "SELECT last_touched_at FROM tasks WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
             println!("  Time within connection: {}", time_in_conn);
         }
-        
+
         // Check with new connection
         let final_time: String = {
             let conn = open_db(&db_path).unwrap();
-            conn.query_row("SELECT last_touched_at FROM tasks WHERE id = 1", [], |row| row.get(0)).unwrap()
+            conn.query_row(
+                "SELECT last_touched_at FROM tasks WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
         };
-        
+
         println!("  Initial time: {}", initial_time);
         println!("  Final time: {}", final_time);
-        
-        assert_ne!(initial_time, final_time, "last_touched_at should be updated by trigger");
-        
+
+        assert_ne!(
+            initial_time, final_time,
+            "last_touched_at should be updated by trigger"
+        );
+
         // Also verify status
         {
             let conn = open_db(&db_path).unwrap();
-            let status: String = conn.query_row(
-                "SELECT status FROM tasks WHERE id = 1", [], |row| row.get(0)
-            ).unwrap();
+            let status: String = conn
+                .query_row("SELECT status FROM tasks WHERE id = 1", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
             assert_eq!(status, "in_progress");
         }
     }
