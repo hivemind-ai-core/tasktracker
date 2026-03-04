@@ -1092,11 +1092,10 @@ mod tests {
         assert_eq!(subtask1.title, "Subtask 1");
         assert_eq!(subtask2.title, "Subtask 2");
 
-        // Dependent should now depend on both subtasks
+        // Dependent should now depend only on the last subtask
         let deps = db::dependencies::get_dependencies(&conn, dependent.id).unwrap();
-        assert_eq!(deps.len(), 2);
+        assert_eq!(deps.len(), 1);
         let dep_ids: Vec<i64> = deps.iter().map(|d| d.depends_on).collect();
-        assert!(dep_ids.contains(&subtask1.id));
         assert!(dep_ids.contains(&subtask2.id));
     }
 
@@ -1116,12 +1115,100 @@ mod tests {
         ];
         let new_tasks = split_task(&conn, original.id, subtasks).unwrap();
 
-        // Subtasks should inherit dependency on prereq
-        for task in &new_tasks {
-            let deps = db::dependencies::get_dependencies(&conn, task.id).unwrap();
-            assert_eq!(deps.len(), 1);
-            assert_eq!(deps[0].depends_on, prereq.id);
-        }
+        // First subtask should inherit dependency on prereq
+        let deps1 = db::dependencies::get_dependencies(&conn, new_tasks[0].id).unwrap();
+        assert_eq!(deps1.len(), 1);
+        assert_eq!(deps1[0].depends_on, prereq.id);
+
+        // Second subtask should depend on first subtask (chain), not prereq
+        let deps2 = db::dependencies::get_dependencies(&conn, new_tasks[1].id).unwrap();
+        assert_eq!(deps2.len(), 1);
+        assert_eq!(deps2[0].depends_on, new_tasks[0].id);
+    }
+
+    #[test]
+    fn test_split_task_sequential_chain() {
+        let conn = setup();
+
+        // Create task to split
+        let original = create_task(&conn, "Original", "", "", None, None, None).unwrap();
+
+        // Split into [A, B, C]
+        let subtasks = vec![
+            ("A".to_string(), "".to_string(), "".to_string()),
+            ("B".to_string(), "".to_string(), "".to_string()),
+            ("C".to_string(), "".to_string(), "".to_string()),
+        ];
+        let new_tasks = split_task(&conn, original.id, subtasks).unwrap();
+        assert_eq!(new_tasks.len(), 3);
+
+        // Verify chain: C→B→A (each subtask depends on previous in reverse order)
+        let deps_a = db::dependencies::get_dependencies(&conn, new_tasks[0].id).unwrap();
+        let deps_b = db::dependencies::get_dependencies(&conn, new_tasks[1].id).unwrap();
+        let deps_c = db::dependencies::get_dependencies(&conn, new_tasks[2].id).unwrap();
+
+        // A has no dependencies (first in chain)
+        assert_eq!(deps_a.len(), 0);
+
+        // B depends on A
+        assert_eq!(deps_b.len(), 1);
+        assert_eq!(deps_b[0].depends_on, new_tasks[0].id);
+
+        // C depends on B
+        assert_eq!(deps_c.len(), 1);
+        assert_eq!(deps_c[0].depends_on, new_tasks[1].id);
+    }
+
+    #[test]
+    fn test_split_task_dependents_on_last_only() {
+        let conn = setup();
+
+        // Create: Dependent -> Original
+        let original = create_task(&conn, "Original", "", "", None, None, None).unwrap();
+        let dependent = create_task(&conn, "Dependent", "", "", None, None, None).unwrap();
+        add_dependency(&conn, dependent.id, original.id).unwrap();
+
+        // Split into [A, B, C]
+        let subtasks = vec![
+            ("A".to_string(), "".to_string(), "".to_string()),
+            ("B".to_string(), "".to_string(), "".to_string()),
+            ("C".to_string(), "".to_string(), "".to_string()),
+        ];
+        let new_tasks = split_task(&conn, original.id, subtasks).unwrap();
+        assert_eq!(new_tasks.len(), 3);
+
+        // Dependent should depend only on the LAST subtask (C)
+        let deps = db::dependencies::get_dependencies(&conn, dependent.id).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].depends_on, new_tasks[2].id);
+    }
+
+    #[test]
+    fn test_split_task_single_subtask() {
+        let conn = setup();
+
+        // Create: Dependent -> Original -> Prereq
+        let prereq = create_task(&conn, "Prereq", "", "", None, None, None).unwrap();
+        let original = create_task(&conn, "Original", "", "", None, None, None).unwrap();
+        add_dependency(&conn, original.id, prereq.id).unwrap();
+
+        let dependent = create_task(&conn, "Dependent", "", "", None, None, None).unwrap();
+        add_dependency(&conn, dependent.id, original.id).unwrap();
+
+        // Split into single subtask
+        let subtasks = vec![("Single".to_string(), "".to_string(), "".to_string())];
+        let new_tasks = split_task(&conn, original.id, subtasks).unwrap();
+        assert_eq!(new_tasks.len(), 1);
+
+        // Single subtask should inherit original dependencies
+        let deps = db::dependencies::get_dependencies(&conn, new_tasks[0].id).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].depends_on, prereq.id);
+
+        // Dependent should depend on the single subtask (which is both first and last)
+        let dependent_deps = db::dependencies::get_dependencies(&conn, dependent.id).unwrap();
+        assert_eq!(dependent_deps.len(), 1);
+        assert_eq!(dependent_deps[0].depends_on, new_tasks[0].id);
     }
 
     #[test]
@@ -1227,9 +1314,10 @@ mod tests {
 
 /// Split a task into multiple subtasks
 ///
-/// The original task is soft-deleted. All dependents of the original
-/// will now depend on ALL of the new subtasks (AND relationship).
-/// All dependencies of the original are inherited by each subtask.
+/// The original task is soft-deleted. The first subtask inherits the
+/// original task's dependencies. Subtasks are chained in reverse order
+/// (each subtask depends on the previous one).
+/// All dependents of the original will now depend only on the last subtask.
 ///
 /// Returns the newly created tasks.
 pub fn split_task(
@@ -1256,20 +1344,27 @@ pub fn split_task(
         new_tasks.push(task);
     }
 
-    // Add original dependencies to all subtasks
-    for subtask in &new_tasks {
+    // Add original dependencies only to the first subtask
+    if let Some(first_subtask) = new_tasks.first() {
         for &prereq_id in &prereq_ids {
-            db::dependencies::add_dependency(conn, subtask.id, prereq_id)?;
+            db::dependencies::add_dependency(conn, first_subtask.id, prereq_id)?;
         }
     }
 
-    // Update all dependents to depend on new subtasks instead of original
-    for dependent_id in dependent_ids {
-        // Remove dependency on original
-        db::dependencies::remove_dependency(conn, dependent_id, task_id)?;
-        // Add dependencies on all new subtasks
-        for subtask in &new_tasks {
-            db::dependencies::add_dependency(conn, dependent_id, subtask.id)?;
+    // Build chain between subtasks in reverse order (last depends on second-last, etc.)
+    for i in 1..new_tasks.len() {
+        let current = &new_tasks[i];
+        let previous = &new_tasks[i - 1];
+        db::dependencies::add_dependency(conn, current.id, previous.id)?;
+    }
+
+    // Update all dependents to depend only on the last subtask instead of original
+    if let Some(last_subtask) = new_tasks.last() {
+        for dependent_id in dependent_ids {
+            // Remove dependency on original
+            db::dependencies::remove_dependency(conn, dependent_id, task_id)?;
+            // Add dependency only on the last subtask
+            db::dependencies::add_dependency(conn, dependent_id, last_subtask.id)?;
         }
     }
 
