@@ -9,7 +9,12 @@ pub fn run<W: Write>(tasks: &[Task], dependencies: &[Dependency], output: &mut W
 
     for task in tasks {
         let title = task.title.replace('"', "\\\"");
-        writeln!(output, "    t{}[\"{}\"]", task.id, title)?;
+        let status_char = task.status.display_char();
+        writeln!(
+            output,
+            "    t{}[\"{} #{}{}\"]",
+            task.id, status_char, task.id, title
+        )?;
     }
 
     for dep in dependencies {

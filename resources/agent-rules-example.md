@@ -1,7 +1,5 @@
 # Agent Rules for tt Task Tracker
 
-This file demonstrates how to integrate tt into an agent's rules. Copy relevant sections to your agent's rules file.
-
 ## Required Rules
 
 ```
@@ -10,9 +8,9 @@ This file demonstrates how to integrate tt into an agent's rules. Copy relevant 
 You MUST use the tt task tracker for all work.
 
 ### Every Session:
-1. Get task: `get_current_task` → none? `list_tasks(status="pending", limit=1)`
+1. Get task: `get_current_task` → none? `advance_task` starts first available one → returns task
 2. Work - create internal todo
-3. Done? `tt_advance_task` → returns next
+3. Done? `advance_task` → returns next task
 
 ### Blocked?
 - Waiting: `edit_task(id=X, action="block")`
@@ -22,22 +20,17 @@ You MUST use the tt task tracker for all work.
 | Tool | Use |
 |------|-----|
 | `get_current_task` | Active task |
-| `advance_task` | Complete + start next |
+| `advance_task` | Complete + start next, start first if no active task |
 | `edit_task(action="block")` | Block |
 | `edit_task(action="unblock")` | Unblock |
 | `list_tasks(status="pending", limit=1)` | Next pending task |
 | `list_tasks(active=true)` | All active tasks (pending or in_progress) |
 
 ### Key Rules:
-- ALWAYS get task from tt first
+- ALWAYS get task from tt
 - ALWAYS create internal todo breakdown
+- ALWAYS start the first task with `advance_task`
 - NEVER skip sub-step creation
 - NEVER complete manually → use `advance_task`
 ```
 
-## Integration
-
-1. Ensure tt MCP server is configured in environment
-2. Add rules above to agent rules file
-3. Agent should check tt on startup
-4. Agent should call `advance_task` after each task

@@ -19,7 +19,7 @@ fn parse_status(status: &str) -> Result<TaskStatus> {
 /// List tasks
 pub fn run(
     conn: &Connection,
-    all: bool,
+    no_focus: bool,
     archived: bool,
     status: Option<String>,
     active: bool,
@@ -46,7 +46,7 @@ pub fn run(
 
     let mut tasks = list_tasks(
         conn,
-        all,
+        no_focus,
         status_filter,
         active,
         limit,
@@ -61,7 +61,12 @@ pub fn run(
 
     // Handle graph output
     if graph {
-        let deps = crate::db::dependencies::get_all_dependencies(conn)?;
+        let all_deps = crate::db::dependencies::get_all_dependencies(conn)?;
+        let task_ids: std::collections::HashSet<i64> = tasks.iter().map(|t| t.id).collect();
+        let deps: Vec<_> = all_deps
+            .into_iter()
+            .filter(|d| task_ids.contains(&d.task_id) && task_ids.contains(&d.depends_on))
+            .collect();
         graph::run(&tasks, &deps, &mut std::io::stdout())?;
         return Ok(());
     }
@@ -69,7 +74,7 @@ pub fn run(
     // Show header
     if archived {
         println!("Archived tasks:");
-    } else if !all && status_filter.is_none() && !active && ids.is_none() {
+    } else if !no_focus && status_filter.is_none() && !active && ids.is_none() {
         // Show focus header if set
         match get_target(conn)? {
             Some(target) => {
@@ -114,7 +119,7 @@ pub fn run(
         }
     }
 
-    if !tasks.is_empty() || all {
+    if !tasks.is_empty() || no_focus {
         println!();
         println!(
             "Legend: {} completed  {} in_progress  {} pending  {} blocked  {} cancelled",

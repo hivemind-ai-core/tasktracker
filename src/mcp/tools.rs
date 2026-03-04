@@ -4,10 +4,10 @@
 
 use crate::core::{
     add_dependencies, add_dependency, advance_task, archive_completed, block_task, block_tasks,
-    clear_target, create_task, edit_task, get_current_task, get_status, get_target,
-    get_task_artifacts, get_task_detail_allow_archived, get_tasks_allow_archived, list_tasks,
-    log_artifact, remove_dependencies, remove_dependency, reorder_task, set_target, split_task,
-    unblock_task, unblock_tasks,
+    clear_target, create_task, edit_task, get_current_task, get_target, get_task_artifacts,
+    get_task_detail_allow_archived, get_tasks_allow_archived, list_tasks, log_artifact,
+    remove_dependencies, remove_dependency, reorder_task, set_target, split_task, unblock_task,
+    unblock_tasks,
 };
 use crate::mcp::transport::McpResponse;
 use rusqlite::Connection;
@@ -58,7 +58,7 @@ struct GetTaskInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ListTasksInput {
     #[serde(default)]
-    all: bool,
+    no_focus: bool,
     #[serde(default)]
     archived: Option<bool>,
     #[serde(default)]
@@ -299,38 +299,6 @@ impl ToolHandler for ClearFocusHandler {
     }
 }
 
-/// Get status handler - combined status information
-pub struct GetStatusHandler;
-
-impl ToolHandler for GetStatusHandler {
-    fn handle(&self, db: &Connection, _params: serde_json::Value) -> Result<McpResponse, String> {
-        match get_status(db) {
-            Ok(status) => Ok(McpResponse::ok(serde_json::json!({
-                "target": status.target,
-                "current_task": status.current_task,
-                "next_task": status.next_task,
-                "summary": {
-                    "pending": status.summary.pending,
-                    "blocked": status.summary.blocked,
-                    "completed": status.summary.completed,
-                    "in_progress": status.summary.in_progress,
-                    "total": status.summary.total,
-                }
-            }))),
-            Err(e) => Ok(McpResponse::from_tt_error(e)),
-        }
-    }
-
-    fn metadata(&self) -> ToolMetadata {
-        let schema = schemars::schema_for!(EmptyInput);
-        ToolMetadata::new(
-            "get_status",
-            "Get comprehensive status of the task tracker including: target task, current active task, next runnable task, and summary counts (pending, blocked, completed, in_progress, total).",
-            serde_json::to_value(schema).unwrap(),
-        )
-    }
-}
-
 /// Get task by ID handler
 pub struct GetTaskHandler;
 
@@ -414,7 +382,7 @@ impl ToolHandler for ListTasksHandler {
 
         match list_tasks(
             db,
-            input.all,
+            input.no_focus,
             status_filter,
             input.active,
             input.limit,

@@ -34,19 +34,34 @@ pub fn run_clear(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Set focus to next incomplete task (lowest manual_order pending)
+/// Set focus to next task after current focus (by manual_order)
 pub fn run_target_next(conn: &Connection) -> Result<()> {
     let all_tasks = crate::db::tasks::get_all_tasks(conn)?;
 
-    // Find the pending task with lowest manual_order
-    let next_task = all_tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Pending)
-        .min_by(|a, b| {
-            a.manual_order
-                .partial_cmp(&b.manual_order)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+    // Get current focus (if any)
+    let current_focus = crate::core::get_target(conn)?;
+
+    let next_task = if let Some(current) = current_focus {
+        // Find task with next higher manual_order after current focus
+        all_tasks
+            .iter()
+            .filter(|t| t.manual_order > current.manual_order)
+            .min_by(|a, b| {
+                a.manual_order
+                    .partial_cmp(&b.manual_order)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    } else {
+        // No focus set - find the first pending task (lowest manual_order)
+        all_tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Pending)
+            .min_by(|a, b| {
+                a.manual_order
+                    .partial_cmp(&b.manual_order)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    };
 
     match next_task {
         Some(task) => {
@@ -55,17 +70,21 @@ pub fn run_target_next(conn: &Connection) -> Result<()> {
             Ok(())
         }
         None => {
-            println!("No pending tasks available.");
+            println!("No next task available.");
             Ok(())
         }
     }
 }
 
-/// Set focus to most recent task (highest id)
+/// Set focus to last task (highest manual_order)
 pub fn run_target_last(conn: &Connection) -> Result<()> {
     let all_tasks = crate::db::tasks::get_all_tasks(conn)?;
 
-    match all_tasks.iter().max_by_key(|t| t.id) {
+    match all_tasks.iter().max_by(|a, b| {
+        a.manual_order
+            .partial_cmp(&b.manual_order)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }) {
         Some(task) => {
             set_target(conn, task.id)?;
             println!("Set focus to #{} ({})", task.id, task.title);

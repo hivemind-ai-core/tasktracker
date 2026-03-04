@@ -526,75 +526,75 @@ fn is_in_target_subgraph(
 /// limit and offset control pagination
 pub fn list_tasks(
     conn: &Connection,
-    all: bool,
+    no_focus: bool,
     status: Option<TaskStatus>,
     active: bool,
     limit: Option<usize>,
     offset: Option<usize>,
     archived: Option<bool>,
 ) -> Result<Vec<Task>> {
-    // Handle archived filter first
-    if archived == Some(true) {
-        return db::tasks::get_archived_tasks(conn, limit, offset);
-    }
-
-    // If active filter is specified, return pending and in_progress tasks
-    if active {
-        return db::tasks::get_active_tasks(conn, limit, offset);
-    }
-
-    // If status filter is specified, use it directly
-    if let Some(s) = status {
-        return db::tasks::get_tasks_by_status(conn, s, limit, offset);
-    }
-
-    if all {
-        db::tasks::get_all_tasks_paginated(conn, limit, offset)
+    // Step 1: Compute base set (respecting focus/no-focus and archived filter)
+    let base_tasks: Vec<Task> = if archived == Some(true) {
+        // Get archived tasks
+        db::tasks::get_archived_tasks(conn, None, None)?
+    } else if no_focus {
+        // Get all non-archived tasks (ignore focus)
+        db::tasks::get_all_tasks_paginated(conn, None, None)?
     } else {
         // Check if target is set
         match db::config::get_target(conn)? {
             Some(target_id) => {
-                // Get subgraph
+                // Get focused subgraph
                 let all_tasks = db::tasks::get_all_tasks(conn)?;
                 let all_deps = db::dependencies::get_all_dependencies(conn)?;
                 let subgraph =
                     crate::core::compute_target_subgraph(target_id, &all_tasks, &all_deps);
 
                 // Sort topologically (dependency order), with manual_order as tiebreaker
-                let sorted =
-                    crate::core::topological_sort(subgraph, &all_deps).unwrap_or_else(|_| {
-                        // Fallback to manual_order if there's a cycle
-                        let mut sorted = all_tasks;
-                        sorted.sort_by(|a, b| {
-                            a.manual_order
-                                .partial_cmp(&b.manual_order)
-                                .unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                        sorted
+                crate::core::topological_sort(subgraph, &all_deps).unwrap_or_else(|_| {
+                    // Fallback to manual_order if there's a cycle
+                    let mut sorted = all_tasks;
+                    sorted.sort_by(|a, b| {
+                        a.manual_order
+                            .partial_cmp(&b.manual_order)
+                            .unwrap_or(std::cmp::Ordering::Equal)
                     });
-
-                // Apply pagination
-                let offset_val = offset.unwrap_or(0);
-                let limited: Vec<Task> = sorted
-                    .into_iter()
-                    .skip(offset_val)
-                    .take(limit.unwrap_or(usize::MAX))
-                    .collect();
-
-                Ok(limited)
+                    sorted
+                })
             }
             None => {
-                // No target set - return all tasks sorted by manual_order
-                let mut tasks = db::tasks::get_all_tasks_paginated(conn, limit, offset)?;
-                tasks.sort_by(|a, b| {
-                    a.manual_order
-                        .partial_cmp(&b.manual_order)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                Ok(tasks)
+                // No focus set, get all non-archived tasks
+                db::tasks::get_all_tasks_paginated(conn, None, None)?
             }
         }
-    }
+    };
+
+    // Step 2: Apply --status filter (only pending, in_progress, completed, blocked)
+    let filtered_tasks = if let Some(s) = status {
+        base_tasks.into_iter().filter(|t| t.status == s).collect()
+    } else {
+        base_tasks
+    };
+
+    // Step 3: Apply --active filter (pending + in_progress)
+    let final_tasks = if active {
+        filtered_tasks
+            .into_iter()
+            .filter(|t| t.status == TaskStatus::Pending || t.status == TaskStatus::InProgress)
+            .collect()
+    } else {
+        filtered_tasks
+    };
+
+    // Step 4: Apply pagination
+    let offset_val = offset.unwrap_or(0);
+    let result: Vec<Task> = final_tasks
+        .into_iter()
+        .skip(offset_val)
+        .take(limit.unwrap_or(usize::MAX))
+        .collect();
+
+    Ok(result)
 }
 
 /// Reorder a task
@@ -786,12 +786,37 @@ pub fn get_status(conn: &Connection) -> Result<StatusOutput> {
 
 /// Advance workflow: complete current task and start the next one
 /// If dry_run is true, returns preview without executing
+/// When focus is set, only considers tasks within the focused subgraph
 pub fn advance_task(conn: &Connection, dry_run: bool) -> Result<AdvanceResult> {
-    // Get current task
-    let current = db::tasks::get_active_task(conn)?;
+    // Check if focus is set
+    let focused_tasks: Option<Vec<Task>> = match db::config::get_target(conn)? {
+        Some(target_id) => {
+            // Get focused subgraph
+            let all_tasks = db::tasks::get_all_tasks(conn)?;
+            let all_deps = db::dependencies::get_all_dependencies(conn)?;
+            Some(crate::core::compute_target_subgraph(
+                target_id, &all_tasks, &all_deps,
+            ))
+        }
+        None => None,
+    };
 
-    // Find next runnable task
-    let next = find_next_runnable(conn)?;
+    // Get current task (in_progress) - either from focused subgraph or global
+    let current = if let Some(ref tasks) = focused_tasks {
+        tasks
+            .iter()
+            .find(|t| t.status == TaskStatus::InProgress)
+            .cloned()
+    } else {
+        db::tasks::get_active_task(conn)?
+    };
+
+    // Find next runnable task - either from focused subgraph or global
+    let next = if let Some(ref tasks) = focused_tasks {
+        find_next_runnable_in_tasks(tasks, conn)?
+    } else {
+        find_next_runnable(conn)?
+    };
 
     if dry_run {
         return Ok(AdvanceResult {
@@ -817,6 +842,42 @@ pub fn advance_task(conn: &Connection, dry_run: bool) -> Result<AdvanceResult> {
     };
 
     Ok(AdvanceResult { completed, started })
+}
+
+/// Find the next runnable task within a given set of tasks
+/// Returns tasks with status=pending, not blocked, with all dependencies completed
+/// Selects by lowest manual_order, then lowest id
+fn find_next_runnable_in_tasks(tasks: &[Task], conn: &Connection) -> Result<Option<Task>> {
+    let all_deps = db::dependencies::get_all_dependencies(conn)?;
+
+    // Filter to pending tasks whose dependencies are all completed (within this set)
+    let candidates: Vec<&Task> = tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Pending)
+        .filter(|t| {
+            // Check all dependencies are completed (in the provided tasks or elsewhere)
+            let task_deps: Vec<&Dependency> =
+                all_deps.iter().filter(|d| d.task_id == t.id).collect();
+            task_deps.iter().all(|d| {
+                tasks
+                    .iter()
+                    .find(|task| task.id == d.depends_on)
+                    .map(|task| task.status == TaskStatus::Completed)
+                    .unwrap_or(true) // If dep not found in focused set, consider it completed
+            })
+        })
+        .collect();
+
+    // Sort by manual_order, then by id
+    let mut candidates: Vec<Task> = candidates.into_iter().cloned().collect();
+    candidates.sort_by(|a, b| {
+        a.manual_order
+            .partial_cmp(&b.manual_order)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    Ok(candidates.into_iter().next())
 }
 
 #[cfg(test)]

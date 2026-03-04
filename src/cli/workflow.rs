@@ -90,6 +90,19 @@ pub fn run_unblock(conn: &Connection, ids: Vec<i64>) -> Result<()> {
 pub fn run_current(conn: &Connection) -> Result<()> {
     let task = get_current_task(conn)?;
 
+    // Check if focus is set and if active task is outside the focused subgraph
+    if let Ok(Some(target_id)) = crate::db::config::get_target(conn) {
+        let all_tasks = crate::db::tasks::get_all_tasks(conn)?;
+        let all_deps = crate::db::dependencies::get_all_dependencies(conn)?;
+        let focused_subgraph =
+            crate::core::compute_target_subgraph(target_id, &all_tasks, &all_deps);
+
+        let in_focus = focused_subgraph.iter().any(|t| t.id == task.id);
+        if !in_focus {
+            println!("WARNING: Active task is outside the focused subgraph.");
+        }
+    }
+
     println!("Active: [#{}] {}", task.id, task.title);
     println!("  Status:    {}", task.status);
 

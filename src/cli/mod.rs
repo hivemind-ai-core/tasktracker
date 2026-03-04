@@ -89,9 +89,9 @@ pub enum Commands {
     /// List tasks with optional filtering
     #[command(alias = "ls")]
     List {
-        /// Show all tasks (not just focused subgraph)
+        /// Ignore focus and show all tasks
         #[arg(long)]
-        all: bool,
+        no_focus: bool,
         /// Show only archived tasks
         #[arg(long)]
         archived: bool,
@@ -282,7 +282,7 @@ pub fn dispatch(cmd: Commands) -> Result<()> {
             show::run(&conn, id)
         }
         Commands::List {
-            all,
+            no_focus,
             archived,
             status,
             active,
@@ -293,7 +293,7 @@ pub fn dispatch(cmd: Commands) -> Result<()> {
         } => {
             let conn = ensure_db()?;
             list::run(
-                &conn, all, archived, status, active, ids, limit, offset, graph,
+                &conn, no_focus, archived, status, active, ids, limit, offset, graph,
             )
         }
         Commands::Focus { action } => {
