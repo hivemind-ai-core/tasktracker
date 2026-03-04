@@ -9,6 +9,7 @@ pub mod dependencies;
 pub mod dump;
 pub mod edit;
 pub mod focus;
+pub mod graph;
 pub mod init;
 pub mod install;
 pub mod list;
@@ -109,6 +110,9 @@ pub enum Commands {
         /// Offset for pagination
         #[arg(long)]
         offset: Option<usize>,
+        /// Output as Mermaid graph
+        #[arg(long, default_value = "false")]
+        graph: bool,
     },
     /// Focus task operations (set, show, clear, next, last)
     Focus {
@@ -285,9 +289,12 @@ pub fn dispatch(cmd: Commands) -> Result<()> {
             ids,
             limit,
             offset,
+            graph,
         } => {
             let conn = ensure_db()?;
-            list::run(&conn, all, archived, status, active, ids, limit, offset)
+            list::run(
+                &conn, all, archived, status, active, ids, limit, offset, graph,
+            )
         }
         Commands::Focus { action } => {
             let conn = ensure_db()?;

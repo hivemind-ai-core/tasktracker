@@ -87,19 +87,6 @@ struct CreateTaskInput {
     before_id: Option<i64>,
     #[serde(default)]
     depends_on: Vec<i64>,
-    /// Split an existing task into subtasks
-    #[serde(default)]
-    split: Option<i64>,
-    /// Subtasks for split (used with split parameter)
-    #[serde(default)]
-    tasks: Option<Vec<SubtaskDefinition>>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct SubtaskDefinition {
-    title: String,
-    description: String,
-    dod: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -185,6 +172,13 @@ struct AdvanceInput {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct ArchiveInput {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct SubtaskDefinition {
+    title: String,
+    description: String,
+    dod: String,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct SplitTaskInput {
@@ -460,43 +454,27 @@ impl ToolHandler for CreateTaskHandler {
         let input: CreateTaskInput =
             serde_json::from_value(params).map_err(|e| format!("Invalid parameters: {e}"))?;
 
-        // Handle split functionality
-        if let Some(task_id) = input.split {
-            let subtasks = input.tasks.ok_or("tasks required when splitting")?;
+        let title = input.title.ok_or("title required")?;
+        let description = input.description.ok_or("description required")?;
+        let dod = input.dod.ok_or("dod required")?;
 
-            let subtask_defs: Vec<(String, String, String)> = subtasks
-                .into_iter()
-                .map(|s| (s.title, s.description, s.dod))
-                .collect();
-
-            match crate::core::split_task(db, task_id, subtask_defs) {
-                Ok(tasks) => Ok(McpResponse::ok(tasks)),
-                Err(e) => Ok(McpResponse::from_tt_error(e)),
-            }
+        let deps_opt = if input.depends_on.is_empty() {
+            None
         } else {
-            // Regular task creation
-            let title = input.title.ok_or("title required")?;
-            let description = input.description.ok_or("description required")?;
-            let dod = input.dod.ok_or("dod required")?;
+            Some(input.depends_on)
+        };
 
-            let deps_opt = if input.depends_on.is_empty() {
-                None
-            } else {
-                Some(input.depends_on)
-            };
-
-            match create_task(
-                db,
-                &title,
-                &description,
-                &dod,
-                input.after_id,
-                input.before_id,
-                deps_opt,
-            ) {
-                Ok(task) => Ok(McpResponse::ok(task)),
-                Err(e) => Ok(McpResponse::from_tt_error(e)),
-            }
+        match create_task(
+            db,
+            &title,
+            &description,
+            &dod,
+            input.after_id,
+            input.before_id,
+            deps_opt,
+        ) {
+            Ok(task) => Ok(McpResponse::ok(task)),
+            Err(e) => Ok(McpResponse::from_tt_error(e)),
         }
     }
 
@@ -504,7 +482,7 @@ impl ToolHandler for CreateTaskHandler {
         let schema = schemars::schema_for!(CreateTaskInput);
         ToolMetadata::new(
             "create_task",
-            "Creates a new task or splits an existing task into subtasks. Use title/description/dod to create a new task. Use split=task_id and tasks=[{title,description,dod},...] to split a task.",
+            "Creates a new task. Use title/description/dod to define the task, and optionally specify after_id/before_id for positioning and depends_on for dependencies.",
             serde_json::to_value(schema).unwrap(),
         )
     }
@@ -1140,6 +1118,7 @@ pub fn register_all_tools() -> HandlerRegistry {
     registry.insert("edit_task".to_string(), Box::new(EditTaskHandler));
     registry.insert("focus".to_string(), Box::new(FocusHandler));
     registry.insert("archive_tasks".to_string(), Box::new(ArchiveTasksHandler));
+    registry.insert("split_task".to_string(), Box::new(SplitTaskHandler));
 
     // Workflow tools
     registry.insert("advance_task".to_string(), Box::new(AdvanceTaskHandler));
@@ -1170,7 +1149,7 @@ mod tests {
     #[test]
     fn test_register_all_tools() {
         let registry = register_all_tools();
-        assert_eq!(registry.len(), 8); // 8 tools
+        assert_eq!(registry.len(), 9); // 9 tools
 
         // Check some key tools exist
         assert!(registry.contains_key("get_task"));
@@ -1182,7 +1161,7 @@ mod tests {
         let registry = register_all_tools();
         let metadata = get_all_tool_metadata(&registry);
 
-        assert_eq!(metadata.len(), 8); // 8 tools
+        assert_eq!(metadata.len(), 9); // 9 tools
 
         // Check metadata structure
         for meta in metadata {

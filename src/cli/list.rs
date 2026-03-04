@@ -1,5 +1,6 @@
 //! List tasks
 
+use crate::cli::graph;
 use crate::core::{get_target, list_tasks, TaskStatus};
 use crate::error::{Error, Result};
 use rusqlite::Connection;
@@ -25,6 +26,7 @@ pub fn run(
     ids: Option<Vec<i64>>,
     limit: Option<usize>,
     offset: Option<usize>,
+    graph: bool,
 ) -> Result<()> {
     // Validate mutual exclusivity of --status and --active
     if status.is_some() && active {
@@ -55,6 +57,13 @@ pub fn run(
     // Filter by ids if provided
     if let Some(ref filter_ids) = ids {
         tasks.retain(|t| filter_ids.contains(&t.id));
+    }
+
+    // Handle graph output
+    if graph {
+        let deps = crate::db::dependencies::get_all_dependencies(conn)?;
+        graph::run(&tasks, &deps, &mut std::io::stdout())?;
+        return Ok(());
     }
 
     // Show header

@@ -336,7 +336,7 @@ All other commands fail with a clear error if `tt.db` is not found in the curren
 | `tt add "<title>" "<description>" "<dod>"` | Creates a task with all required fields. Optional flags: `--depends-on <ids...>`, `--after <id>`, `--before <id>`. Prints the new task ID. Empty strings allowed for optional fields. |
 | `tt edit <id>` | Updates fields. Flags: `--title`, `--desc`, `--dod`. Only provided fields are changed. |
 | `tt show <id> [<ids>...]` | Prints full task detail for one or more tasks (see Section 13). |
-| `tt list` | Prints target subgraph in topological order. `--all` flag shows every task. `--status` filters by status. `--active` filters to pending and in_progress tasks (mutually exclusive with --status). `--limit` and `--offset` for pagination. |
+| `tt list` | Prints target subgraph in topological order. `--all` flag shows every task. `--status` filters by status. `--active` filters to pending and in_progress tasks (mutually exclusive with --status). `--limit` and `--offset` for pagination. `--graph` outputs as Mermaid flowchart. |
 | `tt split <id> <title1> <desc1> <dod1> [, <title2> <desc2> <dod2>, ...]` | Splits a task into multiple subtasks. Original task is deleted. Dependents of original now depend on ALL new tasks. |
 | `tt delete <id>` | Soft delete (archive) a task. `--hard` for permanent delete. |
 | `tt restart <id>` | Moves a completed task back to pending, clearing timestamps. |
@@ -488,11 +488,12 @@ stdio. The AI client spawns `tt mcp` and communicates via stdin/stdout using MCP
 
 Every CLI command from Section 11 (except `init`, `mcp`, `reindex`) should be exposed as an MCP tool. If using `clap-mcp`, this may be automatic. If implementing manually, register each tool with a name, description, input JSON Schema, and handler.
 
-The MCP interface is streamlined to 8 core tools:
+The MCP interface is streamlined to 9 core tools:
 
 | Tool Name | Parameters | Returns |
 |:----------|:-----------|:--------|
 | `create_task` | `{ title: str, description: str, dod: str, depends_on?: int[], after_id?: int, before_id?: int }` | New task object |
+| `split_task` | `{ id: int, subtasks: [{ title: str, description: str, dod: str }] }` | Created subtasks |
 | `tt_focus` | `{ action: "set" \| "get" \| "clear", id?: int }` | Focus task or current focus |
 | `tt_advance_task` | `{ dry_run?: bool }` | Completed task + started next task |
 | `tt_get_task` | `{ id: int }` | Full task detail object |
@@ -526,7 +527,8 @@ The `error_code` maps to the error variant name so the AI can react programmatic
 Tool descriptions are how the AI understands when and why to use each tool. Write them as instructions, not documentation. Examples:
 
 - `tt_advance_task`: *"Completes the current task and starts the next available task in one operation. Use this to efficiently move through your workflow after completing a task."*
-- `create_task`: *"Creates a new task. If you discover during implementation that a task needs to be broken into smaller pieces, create subtasks and add dependencies."*
+- `create_task`: *"Creates a new task with title, description, and definition of done (dod). Use depends_on to set prerequisites, and after_id/before_id for positioning."*
+- `split_task`: *"Splits an existing task into multiple subtasks. The original task is deleted and all new subtasks inherit its dependencies. Dependents now depend on all subtasks."*
 - `tt_focus`: *"Sets, gets, or clears the focus task. When a focus is set, list_tasks only shows the focus task and its transitive dependencies."*
 - `tt_edit_task`: *"Edits a task's fields or performs actions like complete, stop, cancel, block, or unblock. Also handles dependency management via depends_on and remove_depends_on."*
 - `tt_artifacts`: *"Logs a file as an artifact of a task, or lists artifacts for a task. Use descriptive names like 'research', 'plan', 'implementation-notes', 'test-report'."*
