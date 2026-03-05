@@ -18,6 +18,8 @@ pub enum TaskStatus {
     Blocked,
     /// Task was cancelled (terminal state)
     Cancelled,
+    /// Task was split into subtasks (terminal state)
+    Split,
 }
 
 impl TaskStatus {
@@ -29,6 +31,7 @@ impl TaskStatus {
             "completed" => Ok(TaskStatus::Completed),
             "blocked" => Ok(TaskStatus::Blocked),
             "cancelled" => Ok(TaskStatus::Cancelled),
+            "split" => Ok(TaskStatus::Split),
             _ => Err(crate::error::Error::InvalidStatus(s.to_string())),
         }
     }
@@ -41,6 +44,7 @@ impl TaskStatus {
             TaskStatus::Completed => "completed",
             TaskStatus::Blocked => "blocked",
             TaskStatus::Cancelled => "cancelled",
+            TaskStatus::Split => "split",
         }
     }
 
@@ -68,7 +72,10 @@ impl TaskStatus {
 
     /// Check if this status is terminal (cannot transition)
     pub fn is_terminal(&self) -> bool {
-        matches!(self, TaskStatus::Completed | TaskStatus::Cancelled)
+        matches!(
+            self,
+            TaskStatus::Completed | TaskStatus::Cancelled | TaskStatus::Split
+        )
     }
 
     /// Get display character for CLI
@@ -79,6 +86,7 @@ impl TaskStatus {
             TaskStatus::Completed => '✓',
             TaskStatus::Blocked => '✗',
             TaskStatus::Cancelled => '✕',
+            TaskStatus::Split => '÷',
         }
     }
 }

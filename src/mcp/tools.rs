@@ -500,6 +500,7 @@ impl ToolHandler for EditTaskHandler {
                 "completed" => Some(crate::core::models::TaskStatus::Completed),
                 "blocked" => Some(crate::core::models::TaskStatus::Blocked),
                 "cancelled" => Some(crate::core::models::TaskStatus::Cancelled),
+                "split" => Some(crate::core::models::TaskStatus::Split),
                 _ => {
                     return Ok(McpResponse::error(
                         "InvalidStatus",
@@ -1731,26 +1732,29 @@ mod persistence_tests {
                 .unwrap();
             assert_eq!(count, 3, "Should have 3 tasks after splitting");
 
-            // Verify parent is soft-deleted (deleted = 1)
-            let parent_deleted: i64 = conn
+            // Verify parent has Split status
+            let parent_status: String = conn
                 .query_row(
-                    "SELECT deleted FROM tasks WHERE id = ?",
+                    "SELECT status FROM tasks WHERE id = ?",
                     [&parent_id],
                     |row| row.get(0),
                 )
                 .unwrap();
             assert_eq!(
-                parent_deleted, 1,
-                "Parent task should be soft-deleted after split"
+                parent_status, "split",
+                "Parent task should have Split status after split"
             );
 
-            // Count non-deleted tasks - should be 2 subtasks
+            // Count non-deleted tasks - should be 3 (1 parent with Split status + 2 subtasks)
             let active_count: i64 = conn
                 .query_row("SELECT COUNT(*) FROM tasks WHERE deleted = 0", [], |row| {
                     row.get(0)
                 })
                 .unwrap();
-            assert_eq!(active_count, 2, "Should have 2 active subtasks");
+            assert_eq!(
+                active_count, 3,
+                "Should have 3 active tasks (parent with Split + 2 subtasks)"
+            );
         }
 
         // Cleanup

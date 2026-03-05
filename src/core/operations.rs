@@ -104,6 +104,11 @@ pub fn edit_task(
                 TaskStatus::Cancelled => {
                     cancel_task(conn, id)?;
                 }
+                TaskStatus::Split => {
+                    return Err(Error::InvalidStatus(
+                        "Cannot manually set Split status".to_string(),
+                    ));
+                }
             }
         }
     }
@@ -1138,10 +1143,12 @@ mod tests {
 
         assert_eq!(new_tasks.len(), 2);
 
-        // Original should be soft-deleted
-        assert!(db::tasks::get_task(&conn, original.id, false)
+        // Original should have status Split and description with subtask IDs
+        let original_after = db::tasks::get_task(&conn, original.id, false)
             .unwrap()
-            .is_none());
+            .unwrap();
+        assert_eq!(original_after.status, TaskStatus::Split);
+        assert!(original_after.description.unwrap().contains("Split into:"));
 
         // New tasks should exist
         let subtask1 = db::tasks::get_task(&conn, new_tasks[0].id, false)
@@ -1429,8 +1436,15 @@ pub fn split_task(
         }
     }
 
-    // Soft-delete the original task
-    db::tasks::soft_delete_task(conn, task_id)?;
+    // Update the original task: set status to Split and append subtask IDs to description
+    let subtask_ids: Vec<String> = new_tasks.iter().map(|t| format!("#{}", t.id)).collect();
+    let split_note = format!("Split into: {}", subtask_ids.join(", "));
+    let new_description = match &original.description {
+        Some(desc) if !desc.is_empty() => format!("{}\n\n{}", desc, split_note),
+        _ => split_note,
+    };
+    db::tasks::update_task_status(conn, task_id, TaskStatus::Split)?;
+    db::tasks::update_task_description(conn, task_id, Some(&new_description))?;
 
     Ok(new_tasks)
 }
