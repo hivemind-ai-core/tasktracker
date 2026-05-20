@@ -362,7 +362,7 @@ pub fn soft_delete_task(conn: &Connection, id: i64) -> Result<()> {
 /// Archive all completed and cancelled tasks (set deleted = 1)
 pub fn archive_completed_tasks(conn: &Connection) -> Result<usize> {
     let affected = conn.execute(
-        "UPDATE tasks SET deleted = 1 WHERE status IN ('completed', 'cancelled')",
+        "UPDATE tasks SET deleted = 1 WHERE status IN ('completed', 'cancelled', 'split')",
         [],
     )?;
     Ok(affected)

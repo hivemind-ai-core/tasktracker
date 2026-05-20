@@ -4,10 +4,9 @@
 
 use crate::core::{
     add_dependencies, add_dependency, advance_task, archive_completed, block_task, block_tasks,
-    clear_target, create_task, edit_task, get_current_task, get_target, get_task_artifacts,
+    create_task, edit_task, get_current_task, get_target, get_task_artifacts,
     get_task_detail_allow_archived, get_tasks_allow_archived, list_tasks, log_artifact,
-    remove_dependencies, remove_dependency, reorder_task, set_target, split_task, unblock_task,
-    unblock_tasks,
+    remove_dependencies, remove_dependency, reorder_task, split_task, unblock_task, unblock_tasks,
 };
 use crate::mcp::transport::McpResponse;
 use rusqlite::Connection;
@@ -276,29 +275,6 @@ impl ToolHandler for GetTargetHandler {
     }
 }
 
-/// Clear focus handler
-pub struct ClearFocusHandler;
-
-impl ToolHandler for ClearFocusHandler {
-    fn handle(&self, db: &Connection, _params: serde_json::Value) -> Result<McpResponse, String> {
-        match clear_target(db) {
-            Ok(()) => Ok(McpResponse::ok(serde_json::json!({
-                "message": "Focus cleared"
-            }))),
-            Err(e) => Ok(McpResponse::from_tt_error(e)),
-        }
-    }
-
-    fn metadata(&self) -> ToolMetadata {
-        let schema = schemars::schema_for!(EmptyInput);
-        ToolMetadata::new(
-            "clear_focus",
-            "Clear the current focus. After clearing, list_tasks will operate on all tasks.",
-            serde_json::to_value(schema).unwrap(),
-        )
-    }
-}
-
 /// Get task by ID handler
 pub struct GetTaskHandler;
 
@@ -544,136 +520,6 @@ impl ToolHandler for EditTaskHandler {
         ToolMetadata::new(
             "edit_task",
             "Edit a task: change title/description/dod, set status, perform actions (complete/stop/cancel/block/unblock), add/remove dependencies (depends_on, remove_depends_on), or reorder (after, before).",
-            serde_json::to_value(schema).unwrap(),
-        )
-    }
-}
-
-/// Set focus handler
-pub struct SetFocusHandler;
-
-impl ToolHandler for SetFocusHandler {
-    fn handle(&self, db: &Connection, params: serde_json::Value) -> Result<McpResponse, String> {
-        let input: TaskIdInput =
-            serde_json::from_value(params).map_err(|e| format!("Invalid parameters: {e}"))?;
-
-        match set_target(db, input.id) {
-            Ok(()) => Ok(McpResponse::ok(serde_json::json!({
-                "message": "Focus set",
-                "target_id": input.id
-            }))),
-            Err(e) => Ok(McpResponse::from_tt_error(e)),
-        }
-    }
-
-    fn metadata(&self) -> ToolMetadata {
-        let schema = schemars::schema_for!(TaskIdInput);
-        ToolMetadata::new(
-            "set_focus",
-            "Set the focus task you're working toward. This affects which tasks are shown in `list_tasks`.",
-            serde_json::to_value(schema).unwrap(),
-        )
-    }
-}
-
-/// Consolidated focus tool input
-#[derive(Debug, Deserialize, JsonSchema)]
-struct FocusInput {
-    /// Action: set, get, clear
-    action: String,
-    /// Task ID (required for set action)
-    #[serde(default)]
-    id: Option<i64>,
-}
-
-/// Consolidated focus handler
-pub struct FocusHandler;
-
-impl ToolHandler for FocusHandler {
-    fn handle(&self, db: &Connection, params: serde_json::Value) -> Result<McpResponse, String> {
-        let input: FocusInput =
-            serde_json::from_value(params).map_err(|e| format!("Invalid parameters: {e}"))?;
-
-        match input.action.to_lowercase().as_str() {
-            "set" => {
-                let id = input.id.ok_or("id required for set action")?;
-                match set_target(db, id) {
-                    Ok(()) => Ok(McpResponse::ok(serde_json::json!({
-                        "message": "Focus set",
-                        "target_id": id
-                    }))),
-                    Err(e) => Ok(McpResponse::from_tt_error(e)),
-                }
-            }
-            "get" => match get_target(db) {
-                Ok(Some(task)) => Ok(McpResponse::ok(task)),
-                Ok(None) => Ok(McpResponse::ok(serde_json::json!({
-                    "message": "No focus set"
-                }))),
-                Err(e) => Ok(McpResponse::from_tt_error(e)),
-            },
-            "clear" => match clear_target(db) {
-                Ok(()) => Ok(McpResponse::ok(serde_json::json!({
-                    "message": "Focus cleared"
-                }))),
-                Err(e) => Ok(McpResponse::from_tt_error(e)),
-            },
-            "next" => {
-                let all_tasks = crate::db::tasks::get_all_tasks(db).map_err(|e| e.to_string())?;
-                let next_task = all_tasks
-                    .iter()
-                    .filter(|t| t.status == crate::core::TaskStatus::Pending)
-                    .min_by(|a, b| {
-                        a.manual_order
-                            .partial_cmp(&b.manual_order)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-
-                match next_task {
-                    Some(task) => match set_target(db, task.id) {
-                        Ok(()) => Ok(McpResponse::ok(serde_json::json!({
-                            "message": "Focus set",
-                            "target_id": task.id,
-                            "title": task.title
-                        }))),
-                        Err(e) => Ok(McpResponse::from_tt_error(e)),
-                    },
-                    None => Ok(McpResponse::ok(serde_json::json!({
-                        "message": "No pending tasks available"
-                    }))),
-                }
-            }
-            "last" => {
-                let all_tasks = crate::db::tasks::get_all_tasks(db).map_err(|e| e.to_string())?;
-                match all_tasks.iter().max_by_key(|t| t.id) {
-                    Some(task) => match set_target(db, task.id) {
-                        Ok(()) => Ok(McpResponse::ok(serde_json::json!({
-                            "message": "Focus set",
-                            "target_id": task.id,
-                            "title": task.title
-                        }))),
-                        Err(e) => Ok(McpResponse::from_tt_error(e)),
-                    },
-                    None => Ok(McpResponse::ok(serde_json::json!({
-                        "message": "No tasks available"
-                    }))),
-                }
-            }
-            _ => Ok(McpResponse::error(
-                "InvalidAction",
-                &format!(
-                    "Invalid action: {}. Use set, get, clear, next, or last",
-                    input.action
-                ),
-            )),
-        }
-    }
-
-    fn metadata(&self) -> ToolMetadata {
-        let schema = schemars::schema_for!(FocusInput);
-        ToolMetadata::new(
-            "focus",
-            "Manage focus task: set id to focus on a task, get to see current focus, clear to remove focus, next to auto-select lowest pending task, last to select most recent task.",
             serde_json::to_value(schema).unwrap(),
         )
     }
@@ -1085,7 +931,6 @@ pub fn register_all_tools() -> HandlerRegistry {
     // Task management tools
     registry.insert("create_task".to_string(), Box::new(CreateTaskHandler));
     registry.insert("edit_task".to_string(), Box::new(EditTaskHandler));
-    registry.insert("focus".to_string(), Box::new(FocusHandler));
     registry.insert("archive_tasks".to_string(), Box::new(ArchiveTasksHandler));
     registry.insert("split_task".to_string(), Box::new(SplitTaskHandler));
 
@@ -1118,7 +963,7 @@ mod tests {
     #[test]
     fn test_register_all_tools() {
         let registry = register_all_tools();
-        assert_eq!(registry.len(), 9); // 9 tools
+        assert_eq!(registry.len(), 8); // 8 tools
 
         // Check some key tools exist
         assert!(registry.contains_key("get_task"));
@@ -1130,7 +975,7 @@ mod tests {
         let registry = register_all_tools();
         let metadata = get_all_tool_metadata(&registry);
 
-        assert_eq!(metadata.len(), 9); // 9 tools
+        assert_eq!(metadata.len(), 8); // 8 tools
 
         // Check metadata structure
         for meta in metadata {
@@ -1227,12 +1072,6 @@ mod tests {
             McpResponse::Ok { data } => data["id"].as_i64().unwrap(),
             _ => panic!("Expected Ok"),
         };
-
-        // Set focus
-        let set_focus = SetFocusHandler;
-        set_focus
-            .handle(&conn, serde_json::json!({"id": task_id}))
-            .unwrap();
 
         // Start task using edit_task with status
         let edit = EditTaskHandler;
@@ -1427,15 +1266,10 @@ mod tests {
                 }),
             )
             .unwrap();
-        let id = match task {
+        let _id = match task {
             McpResponse::Ok { data } => data["id"].as_i64().unwrap(),
             _ => panic!("Expected Ok"),
         };
-
-        let set_focus = SetFocusHandler;
-        set_focus
-            .handle(&conn, serde_json::json!({"id": id}))
-            .unwrap();
 
         // List tasks
         let list = ListTasksHandler;

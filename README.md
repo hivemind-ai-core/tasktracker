@@ -197,6 +197,7 @@ Once all tasks in the subgraph are complete, `tt next` reports "Target Reached."
 | `✓` | completed |
 | `✗` | blocked |
 | `✕` | cancelled |
+| `÷` | split |
 
 ---
 

@@ -12,6 +12,8 @@ fn parse_status(status: &str) -> Result<TaskStatus> {
         "in_progress" => Ok(TaskStatus::InProgress),
         "completed" => Ok(TaskStatus::Completed),
         "blocked" => Ok(TaskStatus::Blocked),
+        "cancelled" => Ok(TaskStatus::Cancelled),
+        "split" => Ok(TaskStatus::Split),
         _ => Err(Error::InvalidStatus(status.to_string())),
     }
 }

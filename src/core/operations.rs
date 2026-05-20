@@ -568,8 +568,22 @@ pub fn list_tasks(
                 })
             }
             None => {
-                // No focus set, get all non-archived tasks
-                db::tasks::get_all_tasks_paginated(conn, None, None)?
+                // No focus set, get all non-archived tasks and sort topologically
+                let all_tasks = db::tasks::get_all_tasks_paginated(conn, None, None)?;
+                let all_deps = db::dependencies::get_all_dependencies(conn)?;
+                match crate::core::topological_sort(all_tasks, &all_deps) {
+                    Ok(sorted) => sorted,
+                    Err(_) => {
+                        // Fallback to manual_order if there's a cycle
+                        let mut sorted = db::tasks::get_all_tasks_paginated(conn, None, None)?;
+                        sorted.sort_by(|a, b| {
+                            a.manual_order
+                                .partial_cmp(&b.manual_order)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        sorted
+                    }
+                }
             }
         }
     };
@@ -579,6 +593,16 @@ pub fn list_tasks(
         base_tasks.into_iter().filter(|t| t.status == s).collect()
     } else {
         base_tasks
+    };
+
+    // Step 2b: When not showing archived, exclude split tasks (they are terminal)
+    let filtered_tasks = if archived != Some(true) && status.is_none() {
+        filtered_tasks
+            .into_iter()
+            .filter(|t| t.status != TaskStatus::Split)
+            .collect()
+    } else {
+        filtered_tasks
     };
 
     // Step 3: Apply --active filter (pending + in_progress)
@@ -1104,6 +1128,35 @@ mod tests {
 
         // List tasks - B and C should come before A
         let tasks = list_tasks(&conn, false, None, false, None, None, None).unwrap();
+
+        assert_eq!(tasks.len(), 3);
+        // B and C should appear before A (dependencies first)
+        let a_pos = tasks.iter().position(|t| t.id == task_a.id).unwrap();
+        let b_pos = tasks.iter().position(|t| t.id == task_b.id).unwrap();
+        let c_pos = tasks.iter().position(|t| t.id == task_c.id).unwrap();
+
+        assert!(b_pos < a_pos, "B should come before A");
+        assert!(c_pos < a_pos, "C should come before A");
+    }
+
+    #[test]
+    fn test_list_tasks_orders_by_dependencies_without_focus() {
+        let conn = setup();
+
+        // Create tasks: A depends on B and C (no focus set)
+        let task_c = create_task(&conn, "C", "", "", None, None, None).unwrap();
+        let task_b = create_task(&conn, "B", "", "", None, None, None).unwrap();
+        let task_a = create_task(&conn, "A", "", "", None, None, None).unwrap();
+
+        // No target set - this is the key difference from test_list_tasks_orders_by_dependencies
+        // (We don't call set_target here)
+
+        // Add dependencies: A depends on B, A depends on C
+        add_dependency(&conn, task_a.id, task_b.id).unwrap();
+        add_dependency(&conn, task_a.id, task_c.id).unwrap();
+
+        // List tasks with no_focus=true - should still order by dependencies
+        let tasks = list_tasks(&conn, true, None, false, None, None, None).unwrap();
 
         assert_eq!(tasks.len(), 3);
         // B and C should appear before A (dependencies first)

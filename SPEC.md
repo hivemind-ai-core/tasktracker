@@ -85,7 +85,7 @@ erDiagram
         text title "required"
         text description "required"
         text dod "Definition of Done, required"
-        text status "pending|in_progress|completed|blocked"
+        text status "pending|in_progress|completed|blocked|cancelled|split"
         real manual_order "float for ordering"
         text created_at "auto"
         text started_at "nullable"
@@ -119,7 +119,7 @@ erDiagram
 
 ### 4.2 Schema Constraints
 
-- `status` column: CHECK constraint limiting to `pending`, `in_progress`, `completed`, `blocked`.
+- `status` column: CHECK constraint limiting to `pending`, `in_progress`, `completed`, `blocked`, `cancelled`, `split`.
 - `dependencies` table: composite PK on `(task_id, depends_on)`. CHECK constraint: `task_id != depends_on`.
 - All datetime columns store ISO 8601 strings (`strftime('%Y-%m-%dT%H:%M:%S', 'now')`).
 - Indexes on: `tasks(status)`, `tasks(manual_order)`, `dependencies(task_id)`, `dependencies(depends_on)`, `artifacts(task_id)`.
@@ -166,7 +166,12 @@ stateDiagram-v2
     
     completed --> pending: tt restart
     
+    pending --> split: tt split
+    in_progress --> split: tt split
+    
     completed --> [*]
+    cancelled --> [*]
+    split --> [*]
 
     note right of in_progress
         Only one task can be 
@@ -176,6 +181,12 @@ stateDiagram-v2
     note left of completed
         Requires Definition 
         of Done (DoD).
+    end note
+
+    note right of split
+        Terminal state.
+        Original task marked split,
+        subtasks created.
     end note
 ```
 
@@ -191,8 +202,13 @@ stateDiagram-v2
 | in_progress | blocked | `block <id> [<ids>...]` | Task must be `in_progress`. | Clears the active slot. |
 | blocked | pending | `unblock <id> [<ids>...]` | Task must be `blocked`. | — |
 | completed | pending | `restart <id>` | Task must be `completed`. | Clears `completed_at`, resets status to `pending`. |
+| pending | split | `split <id> ...` | Task must be `pending` or `in_progress`. | Original task marked `split`, subtasks created. |
+| in_progress | split | `split <id> ...` | Task must be `pending` or `in_progress`. | Original task marked `split`, subtasks created. |
+| pending | cancelled | `cancel <id>` | Task must be `pending`. | — |
+| in_progress | cancelled | `cancel <id>` | Task must be `in_progress`. | Clears the active slot. |
+| blocked | cancelled | `cancel <id>` | Task must be `blocked`. | — |
 
-No other transitions are valid. `completed` is not a terminal state (tasks can be restarted).
+No other transitions are valid. `completed`, `cancelled`, and `split` are terminal states (tasks cannot be transitioned out of these states).
 
 **Special case:** `tt start <id>` where `<id>` is already `in_progress` should succeed as a no-op and return the task, not error.
 
@@ -337,7 +353,7 @@ All other commands fail with a clear error if `tt.db` is not found in the curren
 | `tt edit <id>` | Updates fields. Flags: `--title`, `--desc`, `--dod`. Only provided fields are changed. |
 | `tt show <id> [<ids>...]` | Prints full task detail for one or more tasks (see Section 13). |
 | `tt list` | Prints target subgraph in topological order. `--all` flag shows every task. `--status` filters by status. `--active` filters to pending and in_progress tasks (mutually exclusive with --status). `--limit` and `--offset` for pagination. `--graph` outputs as Mermaid flowchart. |
-| `tt split <id> <title1> <desc1> <dod1> [, <title2> <desc2> <dod2>, ...]` | Splits a task into multiple subtasks. Original task is deleted. Dependents of original now depend on ALL new tasks. |
+| `tt split <id> <title1> <desc1> <dod1> [, <title2> <desc2> <dod2>, ...]` | Splits a task into multiple subtasks. Original task is marked as `split` (terminal state) with description updated to list subtask IDs. Dependents of original now depend on ALL new tasks. |
 | `tt delete <id>` | Soft delete (archive) a task. `--hard` for permanent delete. |
 | `tt restart <id>` | Moves a completed task back to pending, clearing timestamps. |
 
@@ -409,7 +425,7 @@ All other commands fail with a clear error if `tt.db` is not found in the curren
 
 - Human-readable, compact text to stdout.
 - Errors to stderr, exit code 1.
-- Status indicators: `✓` completed, `●` in\_progress, `○` pending, `✗` blocked.
+- Status indicators: `✓` completed, `●` in\_progress, `○` pending, `✗` blocked, `✕` cancelled, `÷` split.
 
 ### 12.2 `tt list`
 
@@ -528,7 +544,7 @@ Tool descriptions are how the AI understands when and why to use each tool. Writ
 
 - `tt_advance_task`: *"Completes the current task and starts the next available task in one operation. Use this to efficiently move through your workflow after completing a task."*
 - `create_task`: *"Creates a new task with title, description, and definition of done (dod). Use depends_on to set prerequisites, and after_id/before_id for positioning."*
-- `split_task`: *"Splits an existing task into multiple subtasks. The original task is deleted and all new subtasks inherit its dependencies. Dependents now depend on all subtasks."*
+- `split_task`: *"Splits an existing task into multiple subtasks. The original task is marked as 'split' (a terminal state) with its description updated to list the subtask IDs. All new subtasks inherit its dependencies. Dependents now depend on all subtasks."*
 - `tt_focus`: *"Sets, gets, or clears the focus task. When a focus is set, list_tasks only shows the focus task and its transitive dependencies."*
 - `tt_edit_task`: *"Edits a task's fields or performs actions like complete, stop, cancel, block, or unblock. Also handles dependency management via depends_on and remove_depends_on."*
 - `tt_artifacts`: *"Logs a file as an artifact of a task, or lists artifacts for a task. Use descriptive names like 'research', 'plan', 'implementation-notes', 'test-report'."*
